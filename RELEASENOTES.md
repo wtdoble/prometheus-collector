@@ -18,8 +18,8 @@
       * MetricsExtension 2.2023.224.2214 -> 2.2024.328.1744
   * Upgrading telegraf from 1.27.3 to 1.28.5 for linux
   * fix: Change logging from error to info for missing configmap settings to not have errors for older configmaps - https://github.com/Azure/prometheus-collector/pull/804
-  * feat : add support for per cloud AI instance - https://github.com/Azure/prometheus-collector/pull/798
-  * Step 0 : Merge CCP changes to main with a separate image - https://github.com/Azure/prometheus-collector/pull/653
+  * feat: add support for per cloud AI instance - https://github.com/Azure/prometheus-collector/pull/798
+  * Step 0: Merge CCP changes to main with a separate image - https://github.com/Azure/prometheus-collector/pull/653
 
 
 ## Release 03-08-2024
