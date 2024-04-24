@@ -457,6 +457,18 @@ func untypedHandler(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, "untyped_metric{label_1=\"label-value\"} 1")
 }
 
+func basicAuthMiddleware(next http.Handler, username, password string) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		user, pass, ok := r.BasicAuth()
+		if !ok || user != username || pass != password {
+			w.Header().Set("WWW-Authenticate", `Basic realm="Restricted"`)
+			http.Error(w, "Unauthorized.", http.StatusUnauthorized)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 func main() {
 
 	// certFile := "/etc/prometheus/certs/client-cert.pem"
@@ -474,27 +486,24 @@ func main() {
 		recordMetrics()
 	}
 
+	username := "kaveesh"
+	password := "smile123"
+
 	untypedServer := http.NewServeMux()
 	untypedServer.HandleFunc("/metrics", untypedHandler)
 	weatherServer := http.NewServeMux()
-	weatherServer.Handle("/metrics", promhttp.Handler())
+	weatherServer.Handle("/metrics", basicAuthMiddleware(promhttp.Handler(), username, password))
 
 	// Run server for metrics without a type
 	go func() {
 		http.ListenAndServe(":2113", untypedServer)
 	}()
 
-	defer func() {
-		if r := recover(); r != nil {
-			log.Printf("HTTP server failed to start: %v", r)
-		}
-	}()
-
 	// Run main server for weather app metrics
-	// err := http.ListenAndServeTLS(":2112", certFile, keyFile, weatherServer)
-	// if err != nil {
-	// 	log.Printf("HTTP server failed to start: %v", err)
-	// }
+	err := http.ListenAndServe(":2112", weatherServer)
+	if err != nil {
+		log.Printf("HTTP server failed to start: %v", err)
+	}
 
 	fmt.Printf("ending main function")
 }
