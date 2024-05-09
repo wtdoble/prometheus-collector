@@ -16,7 +16,7 @@ data:
       label_value_length_limit: 1023
       relabel_configs:
       - source_labels: [__address__]
-        replacement: '$$NODE_NAME$$'
+        replacement: '${NODE_NAME}'
         target_label: instance
       static_configs:
-      - targets: ['$$NODE_IP$$:19182']
+      - targets: ['${NODE_IP}:19182']
