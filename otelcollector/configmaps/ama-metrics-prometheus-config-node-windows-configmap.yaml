@@ -8,7 +8,7 @@ data:
     global:
       scrape_interval: 15s
     scrape_configs:
-    - job_name: windows-exporter-metrics
+    - job_name: windows-exporter
       scheme: http
       scrape_interval: 30s
       label_limit: 63
