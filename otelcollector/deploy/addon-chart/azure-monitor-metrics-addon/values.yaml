@@ -36,8 +36,8 @@ AzureMonitorMetrics:
       - validatingwebhookconfigurations
       - volumeattachments
   ImageRepository: '/azuremonitor/containerinsights/cidev/prometheus-collector/images'
-  ImageTag: 6.8.7-kaveesh-fix-operator-merger-05-06-2024-e141c95b
-  ImageTagWin: 6.8.7-kaveesh-fix-operator-merger-05-06-2024-e141c95b-win
+  ImageTag: 6.8.11-rashmi-upgrades-04-24-05-15-2024-d9774db4
+  ImageTagWin: 6.8.11-rashmi-upgrades-04-24-05-15-2024-d9774db4-win
   RsCPULimit: 7
   RsMemoryLimit: 14Gi
   RsCPURequest: 150m
@@ -48,8 +48,8 @@ AzureMonitorMetrics:
   DsMemoryRequestLinux: 150Mi
   DsCPULimitWindows: 500m
   DsMemoryLimitWindows: 1Gi
-  ImageTagTargetAllocator: 6.8.7-kaveesh-fix-operator-merger-05-06-2024-e141c95b-targetallocator
-  ImageTagCfgReader: 6.8.7-kaveesh-fix-operator-merger-05-06-2024-e141c95b-cfg
+  ImageTagTargetAllocator: 6.8.11-rashmi-upgrades-04-24-05-15-2024-d9774db4-targetallocator
+  ImageTagCfgReader: 6.8.11-rashmi-upgrades-04-24-05-15-2024-d9774db4-cfg
   TargetAllocatorEnabled: true
   DeploymentReplicas: 1
   CfgReaderCPULimit: 1
@@ -83,9 +83,9 @@ AzureMonitorMetrics:
 global:
   commonGlobals:
     CloudEnvironment: "azurepubliccloud"
-    Region: "westeurope"
+    Region: "westus2"
     Customer:
-      AzureResourceID: "/subscriptions/ce4d1293-71c0-4c72-bc55-133553ee9e50/resourceGroups/kaveeshtest/providers/Microsoft.ContainerService/managedClusters/kaveeshtest"
+      AzureResourceID: "/subscriptions/0e4773a2-8221-441a-a06f-17db16ab16d4/resourceGroups/rashmi-operator-cfg/providers/Microsoft.ContainerService/managedClusters/rashmi-operator-cfg"
 
 # For ARC backdoor testing
 Azure:

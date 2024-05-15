@@ -97,16 +97,24 @@ func ConfigureDebugModeSettings() {
 }
 
 func parseConfigMapForDebugSettings() (map[string]interface{}, error) {
-	if data, err := os.ReadFile(configMapMountPath); err == nil {
-		parsedConfig := make(map[string]interface{})
-		if err := toml.Unmarshal(data, &parsedConfig); err == nil {
-			return parsedConfig, nil
-		} else {
-			return nil, fmt.Errorf("exception while parsing config map for debug mode: %v, using defaults, please check config map for errors", err)
-		}
-	} else {
-		return nil, fmt.Errorf("error reading config map file: %v", err)
+	if _, err := os.Stat(configMapDebugMountPath); os.IsNotExist(err) {
+		return nil, fmt.Errorf("configmap prometheus-collector-configmap for debug mode not mounted, using defaults")
 	}
+
+	content, err := os.ReadFile(configMapDebugMountPath)
+	if err != nil {
+		return nil, fmt.Errorf("Exception while parsing config map for debug mode: %v, using defaults, please check config map for errors\n", err)
+	}
+
+	tree, err := toml.Load(string(content))
+	if err != nil {
+		return nil, fmt.Errorf("Error parsing TOML: %v\n", err)
+	}
+
+	configMap := make(map[string]interface{})
+	configMap["enabled"] = getStringValue(tree.Get("enabled"))
+
+	return configMap, nil
 }
 
 func populateSettingValuesFromConfigMap(parsedConfig map[string]interface{}) {

@@ -162,7 +162,13 @@ func Inotify(outputFile string, location1 string, location2 string) error {
 	// Start the inotify process
 	err = inotifyCommand.Start()
 	if err != nil {
-		log.Fatalf("Error starting inotify process: %v\n", err)
+		log.Fatalf("Error starting inotify command: %v\n", err)
+	}
+
+	// Wait for the command to finish
+	err = inotifyCommand.Wait()
+	if err != nil {
+		fmt.Printf("Error waiting inotify command: %v\n", err)
 	}
 
 	return nil
