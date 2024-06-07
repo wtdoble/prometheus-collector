@@ -269,7 +269,7 @@ func StartMetricsExtensionForOverlay(meConfigFile string) (int, error) {
 	return cmd.Process.Pid, nil
 }
 
-func StartMetricsExtensionWithConfigOverrides(configOverrides string) {
+func StartMetricsExtensionWithConfigOverridesForUnderlay(configOverrides string) {
 	cmd := exec.Command("/usr/sbin/MetricsExtension", "-Logger", "Console", "-LogLevel", "Error", "-LocalControlChannel", "-TokenSource", "AMCS", "-DataDirectory", "/etc/mdsd.d/config-cache/metricsextension", "-Input", "otlp_grpc_prom", "-ConfigOverridesFilePath", "/usr/sbin/me.config")
 
 	// Create a file to store the stdoutput
@@ -337,7 +337,7 @@ func StartMdsdForOverlay() {
 	}
 }
 
-func StartMdsd() {
+func StartMdsdForUnderlay() {
 	cmd := exec.Command("/usr/sbin/mdsd", "-a", "-A", "-D")
 	// // Create a file to store the stdoutput
 	// mdsd_stdout_file, err := os.Create("mdsd_stdout.log")
