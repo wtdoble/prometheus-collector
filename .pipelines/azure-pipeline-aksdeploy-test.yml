@@ -20,7 +20,7 @@ stages:
           script: |
             $sleepTime = ${env:SLEEPTIME_IN_SECONDS}
             Get-Date
-            Write-host "Letting cluster run $sleepTime seconds before testing..."
+            Write-host "Allowing cluster run $sleepTime seconds before testing..."
             Sleep -Seconds $sleepTime
 
 - stage: Test
