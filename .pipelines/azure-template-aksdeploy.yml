@@ -21,7 +21,7 @@ steps:
       $clusterName = $(${{ parameters.clusterName }}).Trim()
       $resourceGroup = $(${{ parameters.resourceGroup }}).Trim()
       $actionGroupId = $(${{ parameters.actionGroupId }}).Trim()
-      $defaultParms = $(${{ parameters.defaultParameters }}).Trim()
+      $defaultParms = $('${{ parameters.defaultParameters }}').Trim()
 
       $rg = (az group show -g $resourceGroup | convertfrom-json)
       if ($rg -eq $null) {
