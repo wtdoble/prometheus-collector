@@ -18,9 +18,9 @@ steps:
     scriptType: ps
     scriptLocation: inlineScript
     inlineScript: |
-      $clusterName = $(${{ parameters.clusterName }}).Trim()
-      $resourceGroup = $(${{ parameters.resourceGroup }}).Trim()
-      $actionGroupId = $(${{ parameters.actionGroupId }}).Trim()
+      $clusterName = $('${{ parameters.clusterName }}').Trim()
+      $resourceGroup = $('${{ parameters.resourceGroup }}').Trim()
+      $actionGroupId = $('${{ parameters.actionGroupId }}').Trim()
       $defaultParms = $('${{ parameters.defaultParameters }}').Trim()
 
       $rg = (az group show -g $resourceGroup | convertfrom-json)
