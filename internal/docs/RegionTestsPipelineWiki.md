@@ -54,5 +54,6 @@ A typical value for **DEFAULT-PARAMETERS** is as follows:
   >{"clusterName":{"value":"aksCluster"},"actionGroupId":{"value":"/subscriptions/b9842c7c-1a38-4385-8f39-a51314758bcf/resourceGroups/wtd-test/providers/Microsoft.Insights/actiongroups/wtdTestAg"}}
 
   Values in this Json object will be replaced with the values for the following Pipeline variables if they are supplied:
-  + **CLUSTERNAME** (clusterName)
-  + **ACTION-GROUP-ID** (actionGroupId)
+
++ **CLUSTERNAME** (clusterName)
++ **ACTION-GROUP-ID** (actionGroupId)
