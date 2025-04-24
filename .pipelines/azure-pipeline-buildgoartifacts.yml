@@ -1,0 +1,174 @@
+trigger:
+- none
+
+pool:
+  vmImage: windows-latest
+
+variables:
+  GOPATHARTIFACTS: "C:\\Users\\VssAdministrator\\go"
+
+stages:
+- stage: Build
+  jobs:
+  - job: BuildJob
+    steps:
+    - script: git clone https://github.com/wtdoble/prometheus-collector.git $(Agent.Workfolder)\github
+
+    - task: Go@0
+      displayName: go install ginkgo
+      inputs:
+        command: 'install' # 'get' | 'build' | 'test' | 'custom'. Required. Command. Default: get.
+        #customCommand: # string. Required when command == custom. Custom command. 
+        arguments: github.com/onsi/ginkgo/v2/ginkgo@latest # string. Arguments. 
+        # Advanced
+        # workingDirectory:  # string. Working directory.    
+        # PowerShell v2
+        # Run a PowerShell script o"n Linux, macOS, or Windows.
+
+    - task: PowerShell@2
+      displayName: go mod tidy
+      inputs:
+        targetType: 'inline' # 'filePath' | 'inline'. Type. Default: filePath.
+        ##filePath: # string. Required when targetType = filePath. Script Path. 
+        #arguments: # string. Optional. Use when targetType = filePath. Arguments. 
+        script: | # string. Required when targetType = inline. Script. 
+          get-childitem -Recurse -path $(Agent.Workfolder)/github -Filter *.mod | foreach {
+            "DirectoryName: $($_.DirectoryName)"
+            cd $_.DirectoryName
+            go mod tidy
+          }
+
+    - task: PublishBuildArtifacts@1
+      displayName: Publish Go artifacts
+      inputs:
+        PathtoPublish: '$(Build.ArtifactStagingDirectory)\go' # string. Required. Path to publish. Default: $(Build.ArtifactStagingDirectory).
+        ArtifactName: 'go' # string. Required. Artifact name. Default: drop.
+        publishLocation: 'Container'
+
+        # - task: PublishPipelineArtifact@1
+        #   inputs:
+        #     targetPath: $(Agent.Workfolder)\github
+        #     artifact: 'github'
+        #     publishLocation: 'pipeline'
+    - task: PowerShell@2
+      displayName: TEST downloaded artifacts
+      inputs:
+        targetType: 'inline' # 'filePath' | 'inline'. Type. Default: filePath.
+        ##filePath: # string. Required when targetType = filePath. Script Path. 
+        #arguments: # string. Optional. Use when targetType = filePath. Arguments. 
+        script: | # string. Required when targetType = inline. Script.  
+          $newGoDir = "$(Agent.Workfolder)\go"
+          $newGoDir
+          Copy-Item -Path "C:\Users\VssAdministrator\go" -Destination $newGoDir -Recurse -Force
+
+          $dir = $env:GOPATHARTIFACTS
+          $dir
+
+          [Environment]::SetEnvironmentVariable("GOPATH", $newGoDir)
+          [Environment]::GetEnvironmentVariable("GOPATH")
+
+          $path = [Environment]::GetEnvironmentVariable("PATH")
+          $path = "$path;$newGoDir\bin"
+          $path = [Environment]::SetEnvironmentVariable("PATH", $path)
+          [Environment]::GetEnvironmentVariable("PATH")
+
+          write-host "removing $dir"
+          remove-item -path $dir -recurse -force
+
+          ginkgo -h
+        pwsh: true
+    # - template: azure-pipelines-template.yml
+    #   condition: false
+    #   parameters:
+    #     azureSubscription: "ContainerInsights_Dev_Grace"
+    #     resourceGroup: "wtd-test"
+    #     deployParameters: ${env:PARAMETERS}
+            ##---------------------
+    # - template: azure-pipelines-testsuites-template.yml
+    #   parameters:
+    #     azureSubscription: "ContainerInsights_Dev_Grace"
+    #     resourceGroup: "wtd-test"
+    #     clusterName: "wtdAksCluster"   
+    #     goPath: "$(Agent.Workfolder)\\go"
+        ##---------------------
+        # Publish build artifacts v1
+        # Publish build artifacts to Azure Pipelines or a Windows file share.
+        # # - task: PublishBuildArtifacts@1
+        # #   displayName: Publish Github artifacts
+        # #   inputs:
+        # #     PathtoPublish: '$(Build.ArtifactStagingDirectory)\github' # string. Required. Path to publish. Default: $(Build.ArtifactStagingDirectory).
+        # #     ArtifactName: 'github' # string. Required. Artifact name. Default: drop.
+        # #     publishLocation: 'Container'
+        # 'Container' | 'FilePath'. Alias: ArtifactType. Required. Artifact publish location. Default: Container.
+        # boolean. Tar the artifact before uploading. Default: false.
+        #MaxArtifactSize: '0' # string. Max Artifact Size. Default: 0.
+        #TargetPath: # string. Required when ArtifactType = FilePath. File share path. 
+        #Parallel: false # boolean. Optional. Use when ArtifactType = FilePath. Parallel copy. Default: false.
+        #ParallelCount: '8' # string. Optional. Use when ArtifactType = FilePath && Parallel = true. Parallel count. Default: 8.
+        # Advanced
+        # Publish Pipeline Artifacts v1
+        # Publish (upload) a file or directory as a named artifact for the current run.
+        # - task: PublishPipelineArtifact@1
+        #   inputs:
+        #     targetPath: '$(Agent.Workfolder)\go' # string. Alias: path. Required. File or directory path. Default: $(Pipeline.Workspace).
+        #     artifact: drop # string. Alias: artifactName. Artifact name. 
+        #     publishLocation: 'pipeline' # 'pipeline' | 'filepath'. Alias: artifactType. Required. Artifact publish location. Default: pipeline.
+        #fileSharePath: # string. Required when artifactType = filepath. File share path. 
+        #parallel: false # boolean. Optional. Use when artifactType = filepath. Parallel copy. Default: false.
+        #parallelCount: '8' # string. Optional. Use when artifactType = filepath && parallel = true. Parallel count. Default: 8.
+        #properties: # string. Custom properties.
+
+        # - stage: Deploy
+        #   dependsOn: Build
+        #   jobs:
+        #   - job: DeployJob
+        #     steps:
+        #     - template: azure-pipelines-template.yml
+        #       parameters:
+        #         azureSubscription: "ContainerInsights_Dev_Grace"
+        #         resourceGroup: "wtd-test"
+        #         deployParameters: ${env:PARAMETERS}
+        # - stage: Test
+        #   dependsOn: Deploy
+        #   jobs:
+        #   - job: TestJob
+        #     steps:
+        #     - template: azure-pipelines-testsuites-template.yml
+        #       parameters:
+        #         azureSubscription: "ContainerInsights_Dev_Grace"
+        #         resourceGroup: "wtd-test"
+        #         clusterName: "wtdAksCluster"
+
+
+
+        # - task: PowerShell@2
+        #   displayName: GetEnv
+        #   inputs:
+        #     targetType: 'inline' # 'filePath' | 'inline'. Type. Default: filePath.
+        #     script: | # string. Required when targetType = inline. Script. 
+        #       [Environment]::GetEnvironmentVariable("PATH")
+        #       [Environment]::GetEnvironmentVariable("USERPROFILE")
+        #       [Environment]::GetEnvironmentVariable("GOPATH")
+
+        # - task: PowerShell@2
+        #   displayName: Compress go
+        #   inputs:
+        #     targetType: 'inline' # 'filePath' | 'inline'. Type. Default: filePath.
+        #     ##filePath: # string. Required when targetType = filePath. Script Path. 
+        #     #arguments: # string. Optional. Use when targetType = filePath. Arguments. 
+        #     script: | # string. Required when targetType = inline. Script. 
+        #       compress-archive -Path "$(GOPATHARTIFACTS)" -DestinationPath "$(Agent.Workfolder)\go.zip" -compressionLevel Fastest
+        #     # Preference Variables
+        #     #errorActionPreference: 'stop' # 'default' | 'stop' | 'continue' | 'silentlyContinue'. ErrorActionPreference. Default: stop.
+        #     #warningPreference: 'default' # 'default' | 'stop' | 'continue' | 'silentlyContinue'. WarningPreference. Default: default.
+        #     #informationPreference: 'default' # 'default' | 'stop' | 'continue' | 'silentlyContinue'. InformationPreference. Default: default.
+        #     #verbosePreference: 'default' # 'default' | 'stop' | 'continue' | 'silentlyContinue'. VerbosePreference. Default: default.
+        #     #debugPreference: 'default' # 'default' | 'stop' | 'continue' | 'silentlyContinue'. DebugPreference. Default: default.
+        #     #progressPreference: 'silentlyContinue' # 'default' | 'stop' | 'continue' | 'silentlyContinue'. ProgressPreference. Default: silentlyContinue.
+        #     # Advanced
+        #     #failOnStderr: false # boolean. Fail on Standard Error. Default: false.
+        #     #showWarnings: false # boolean. Show warnings as Azure DevOps warnings. Default: false.
+        #     #ignoreLASTEXITCODE: false # boolean. Ignore $LASTEXITCODE. Default: false.
+        #     #pwsh: false # boolean. Use PowerShell Core. Default: false.
+        #     #workingDirectory: # string. Working Directory. 
+        #     #runScriptInSeparateScope: false # boolean. Run script in the separate scope. Default: false.
