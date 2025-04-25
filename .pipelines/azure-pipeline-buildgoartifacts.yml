@@ -43,7 +43,7 @@ stages:
     - task: PublishBuildArtifacts@1
       displayName: Publish Go artifacts
       inputs:
-        PathtoPublish: '$(GOPATHARTIFACTS)\go' # string. Required. Path to publish. Default: $(Build.ArtifactStagingDirectory).
+        PathtoPublish: '$(GOPATHARTIFACTS)' # string. Required. Path to publish. Default: $(Build.ArtifactStagingDirectory).
         ArtifactName: 'go' # string. Required. Artifact name. Default: drop.
         publishLocation: 'Container'
 
