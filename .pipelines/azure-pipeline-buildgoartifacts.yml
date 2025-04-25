@@ -12,7 +12,9 @@ stages:
   jobs:
   - job: BuildJob
     steps:
-    - script: git clone https://github.com/wtdoble/prometheus-collector.git $(Agent.Workfolder)\github
+    - script: git clone https://github.com/wtdoble/prometheus-collector.git $(Build.ArtifactStagingDirectory)\github
+    ## https://learn.microsoft.com/en-us/azure/devops/pipelines/build/variables?view=azure-devops&tabs=yaml
+    ## see - $(Build.Repository.LocalPath)
 
     - task: Go@0
       displayName: go install ginkgo
@@ -32,7 +34,7 @@ stages:
         ##filePath: # string. Required when targetType = filePath. Script Path. 
         #arguments: # string. Optional. Use when targetType = filePath. Arguments. 
         script: | # string. Required when targetType = inline. Script. 
-          get-childitem -Recurse -path $(Agent.Workfolder)/github -Filter *.mod | foreach {
+          get-childitem -Recurse -path $(Build.ArtifactStagingDirectory)\github -Filter *.mod | foreach {
             "DirectoryName: $($_.DirectoryName)"
             cd $_.DirectoryName
             go mod tidy
@@ -41,7 +43,7 @@ stages:
     - task: PublishBuildArtifacts@1
       displayName: Publish Go artifacts
       inputs:
-        PathtoPublish: '$(Build.ArtifactStagingDirectory)\go' # string. Required. Path to publish. Default: $(Build.ArtifactStagingDirectory).
+        PathtoPublish: '$(GOPATHARTIFACTS)\go' # string. Required. Path to publish. Default: $(Build.ArtifactStagingDirectory).
         ArtifactName: 'go' # string. Required. Artifact name. Default: drop.
         publishLocation: 'Container'
 
@@ -50,33 +52,33 @@ stages:
         #     targetPath: $(Agent.Workfolder)\github
         #     artifact: 'github'
         #     publishLocation: 'pipeline'
-    - task: PowerShell@2
-      displayName: TEST downloaded artifacts
-      inputs:
-        targetType: 'inline' # 'filePath' | 'inline'. Type. Default: filePath.
-        ##filePath: # string. Required when targetType = filePath. Script Path. 
-        #arguments: # string. Optional. Use when targetType = filePath. Arguments. 
-        script: | # string. Required when targetType = inline. Script.  
-          $newGoDir = "$(Agent.Workfolder)\go"
-          $newGoDir
-          Copy-Item -Path "C:\Users\VssAdministrator\go" -Destination $newGoDir -Recurse -Force
+    # - task: PowerShell@2
+    #   displayName: TEST downloaded artifacts
+    #   inputs:
+    #     targetType: 'inline' # 'filePath' | 'inline'. Type. Default: filePath.
+    #     ##filePath: # string. Required when targetType = filePath. Script Path. 
+    #     #arguments: # string. Optional. Use when targetType = filePath. Arguments. 
+    #     script: | # string. Required when targetType = inline. Script.  
+    #       $newGoDir = "$(Agent.Workfolder)\go"
+    #       $newGoDir
+    #       Copy-Item -Path "C:\Users\VssAdministrator\go" -Destination $newGoDir -Recurse -Force
 
-          $dir = $env:GOPATHARTIFACTS
-          $dir
+    #       $dir = $env:GOPATHARTIFACTS
+    #       $dir
 
-          [Environment]::SetEnvironmentVariable("GOPATH", $newGoDir)
-          [Environment]::GetEnvironmentVariable("GOPATH")
+    #       [Environment]::SetEnvironmentVariable("GOPATH", $newGoDir)
+    #       [Environment]::GetEnvironmentVariable("GOPATH")
 
-          $path = [Environment]::GetEnvironmentVariable("PATH")
-          $path = "$path;$newGoDir\bin"
-          $path = [Environment]::SetEnvironmentVariable("PATH", $path)
-          [Environment]::GetEnvironmentVariable("PATH")
+    #       $path = [Environment]::GetEnvironmentVariable("PATH")
+    #       $path = "$path;$newGoDir\bin"
+    #       $path = [Environment]::SetEnvironmentVariable("PATH", $path)
+    #       [Environment]::GetEnvironmentVariable("PATH")
 
-          write-host "removing $dir"
-          remove-item -path $dir -recurse -force
+    #       write-host "removing $dir"
+    #       remove-item -path $dir -recurse -force
 
-          ginkgo -h
-        pwsh: true
+    #       ginkgo -h
+    #     pwsh: true
     # - template: azure-pipelines-template.yml
     #   condition: false
     #   parameters:
