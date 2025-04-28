@@ -13,7 +13,7 @@ resources:
       type: git
       name: OneBranch.Pipelines/GovernedTemplates
       ref: refs/heads/main
-      endpoint: 'OneBranch.Pipelines'
+      endpoint: 'https://onebranch.visualstudio.com/OneBranch.Pipelines/_git/GovernedTemplates'
 
 extends:
   template: v2/OneBranch.Official.CrossPlat.yml@templates # https://aka.ms/obpipelines/templates
