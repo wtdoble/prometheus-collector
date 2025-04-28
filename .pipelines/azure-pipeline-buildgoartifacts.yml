@@ -7,45 +7,73 @@ pool:
 variables:
   GOPATHARTIFACTS: "C:\\Users\\VssAdministrator\\go"
 
-stages:
-- stage: Build
-  jobs:
-  - job: BuildJob
-    steps:
-    - script: git clone https://github.com/wtdoble/prometheus-collector.git $(Build.ArtifactStagingDirectory)\github
-    ## https://learn.microsoft.com/en-us/azure/devops/pipelines/build/variables?view=azure-devops&tabs=yaml
-    ## see - $(Build.Repository.LocalPath)
+resources:
+  repositories:
+    - repository: templates
+      type: git
+      name: OneBranch.Pipelines/GovernedTemplates
+      ref: refs/heads/main
 
-    - task: Go@0
-      displayName: go install ginkgo
-      inputs:
-        command: 'install' # 'get' | 'build' | 'test' | 'custom'. Required. Command. Default: get.
-        #customCommand: # string. Required when command == custom. Custom command. 
-        arguments: github.com/onsi/ginkgo/v2/ginkgo@latest # string. Arguments. 
-        # Advanced
-        # workingDirectory:  # string. Working directory.    
-        # PowerShell v2
-        # Run a PowerShell script o"n Linux, macOS, or Windows.
+extends:
+  template: v2/OneBranch.Official.CrossPlat.yml@templates # https://aka.ms/obpipelines/templates
+  parameters:
+    runmode: stage
+    globalSdl: # https://aka.ms/obpipelines/sdl
+      tsa:
+        enabled: false
+      binskim:
+        break: true
+      policheck:
+        break: true
+    stages:
+    - stage: Build
+      jobs:
+      - job: BuildJob
+        steps:
+        - script: git clone https://github.com/wtdoble/prometheus-collector.git $(Build.ArtifactStagingDirectory)\github
+        ## https://learn.microsoft.com/en-us/azure/devops/pipelines/build/variables?view=azure-devops&tabs=yaml
+        ## see - $(Build.Repository.LocalPath)
 
-    - task: PowerShell@2
-      displayName: go mod tidy
-      inputs:
-        targetType: 'inline' # 'filePath' | 'inline'. Type. Default: filePath.
-        ##filePath: # string. Required when targetType = filePath. Script Path. 
-        #arguments: # string. Optional. Use when targetType = filePath. Arguments. 
-        script: | # string. Required when targetType = inline. Script. 
-          get-childitem -Recurse -path $(Build.ArtifactStagingDirectory)\github -Filter *.mod | foreach {
-            "DirectoryName: $($_.DirectoryName)"
-            cd $_.DirectoryName
-            go mod tidy
-          }
+        - task: Go@0
+          displayName: go install ginkgo
+          inputs:
+            command: 'install' # 'get' | 'build' | 'test' | 'custom'. Required. Command. Default: get.
+            #customCommand: # string. Required when command == custom. Custom command. 
+            arguments: github.com/onsi/ginkgo/v2/ginkgo@latest # string. Arguments. 
+            # Advanced
+            # workingDirectory:  # string. Working directory.    
+            # PowerShell v2
+            # Run a PowerShell script o"n Linux, macOS, or Windows.
 
-    - task: PublishBuildArtifacts@1
-      displayName: Publish Go artifacts
-      inputs:
-        PathtoPublish: '$(GOPATHARTIFACTS)' # string. Required. Path to publish. Default: $(Build.ArtifactStagingDirectory).
-        ArtifactName: 'go' # string. Required. Artifact name. Default: drop.
-        publishLocation: 'Container'
+        - task: PowerShell@2
+          displayName: go mod tidy
+          inputs:
+            targetType: 'inline' # 'filePath' | 'inline'. Type. Default: filePath.
+            ##filePath: # string. Required when targetType = filePath. Script Path. 
+            #arguments: # string. Optional. Use when targetType = filePath. Arguments. 
+            script: | # string. Required when targetType = inline. Script. 
+              get-childitem -Recurse -path $(Build.ArtifactStagingDirectory)\github -Filter *.mod | foreach {
+                "DirectoryName: $($_.DirectoryName)"
+                cd $_.DirectoryName
+                go mod tidy
+              }
+
+        - task: PublishBuildArtifacts@1
+          displayName: Publish Go artifacts
+          inputs:
+            PathtoPublish: '$(GOPATHARTIFACTS)' # string. Required. Path to publish. Default: $(Build.ArtifactStagingDirectory).
+            ArtifactName: 'go' # string. Required. Artifact name. Default: drop.
+            publishLocation: 'Container'
+
+          # azureSubscription: "ContainerInsights_Dev_Grace"
+          # resourceGroup: "wtd-test"
+          # goPath: "$(Agent.Workfolder)\\go"
+          # #goPath: "$(GOPATHARTIFACTS)"
+          # #goPath: "$(Build.ArtifactStagingDirectory)\github\go"
+          # #goPath: "$(Build.ArtifactStagingDirectory)\github\go\bin"
+          # #goPath: "$(Build.ArtifactStagingDirectory)\github\go\src"  
+      
+
 
         # - task: PublishPipelineArtifact@1
         #   inputs:
