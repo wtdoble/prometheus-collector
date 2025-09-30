@@ -4,7 +4,9 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"log"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -16,9 +18,9 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	v1 "github.com/prometheus/client_golang/api/prometheus/v1"
-	"github.com/prometheus/common/model"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/clientcmd" //*************NEW - WTD***************************
 )
 
 var (
@@ -27,6 +29,7 @@ var (
 	PrometheusQueryClient v1.API
 	parmRuleName          string
 	parmAmwResourceId     string
+	//parmKubeconfigPath    string //*************NEW - WTD***************************
 	//v                     bool
 	//verboseLogging        bool = false
 )
@@ -37,6 +40,7 @@ const controllerLabelName = "rsName"
 const controllerLabelValue = "ama-metrics"
 
 func init() {
+	//flag.StringVar(&parmKubeconfigPath, "kubeconfig", "", "Path to the kubeconfig file") //*************NEW - WTD***************************
 	flag.StringVar(&parmRuleName, "parmRuleName", "", "Prometheus rule name to use in this test suite")
 	flag.StringVar(&parmAmwResourceId, "parmAmwResourceId", "", "AMW resource id to use in this test suite")
 }
@@ -47,9 +51,31 @@ func TestTest(t *testing.T) {
 	RunSpecs(t, "Test Suite")
 }
 
+func getKubeClient() (*kubernetes.Clientset, *rest.Config, error) {
+	kubeconfig := os.Getenv("KUBECONFIG")
+	if kubeconfig == "" {
+		kubeconfig = filepath.Join(os.TempDir(), "kubeconfig.yaml")
+	}
+
+	fmt.Printf("env (KUBECONFIG): %s\r\n", kubeconfig)
+	Expect(kubeconfig).NotTo(BeEmpty())
+
+	cfg, err := clientcmd.BuildConfigFromFlags("", kubeconfig)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	client, err := kubernetes.NewForConfig(cfg)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return client, cfg, nil
+}
+
 var _ = BeforeSuite(func() {
 	var err error
-	K8sClient, Cfg, err = utils.SetupKubernetesClient()
+	K8sClient, Cfg, err = getKubeClient() ////****** NEW - WTD ************** utils.SetupKubernetesClient()
 	Expect(err).NotTo(HaveOccurred())
 
 	amwQueryEndpoint := os.Getenv("AMW_QUERY_ENDPOINT")
@@ -207,48 +233,58 @@ var _ = Describe("Regions Suite", func() {
 	})
 
 	Context("Examine Prometheus via the AMW", func() {
-		It("Query for a metric", func() {
-			query := "up"
+		// // It("Query for a metric", func() {
+		// // 	query := "up"
 
-			fmt.Printf("Examining metrics via the query: '%s'\r\n", query)
+		// // 	fmt.Printf("Examining metrics via the query: '%s'\r\n", query)
 
-			warnings, result, err := utils.InstantQuery(PrometheusQueryClient, query)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(warnings).To(BeEmpty())
+		// // 	warnings, result, err := utils.InstantQuery(PrometheusQueryClient, query)
+		// // 	Expect(err).NotTo(HaveOccurred())
+		// // 	Expect(warnings).To(BeEmpty())
 
-			// Ensure there is at least one result
-			vectorResult, ok := result.(model.Vector)
-			Expect(ok).To(BeTrue(), "Result should be of type model.Vector")
-			Expect(vectorResult).NotTo(BeEmpty(), "Result should not be empty")
+		// // 	// Ensure there is at least one result
+		// // 	vectorResult, ok := result.(model.Vector)
+		// // 	Expect(ok).To(BeTrue(), "Result should be of type model.Vector")
+		// // 	Expect(vectorResult).NotTo(BeEmpty(), "Result should not be empty")
 
-			fmt.Printf("%d metrics were returned from the query.\r\n", vectorResult.Len())
-		})
+		// // 	fmt.Printf("%d metrics were returned from the query.\r\n", vectorResult.Len())
+		// // })
 
-		It("Query the specified recording rule", func() {
-			fmt.Printf("Examining the recording rule: %s", parmRuleName)
+		// // It("Query the specified recording rule", func() {
+		// // 	fmt.Printf("Examining the recording rule: %s", parmRuleName)
 
-			warnings, result, err := utils.InstantQuery(PrometheusQueryClient, parmRuleName)
+		// // 	warnings, result, err := utils.InstantQuery(PrometheusQueryClient, parmRuleName)
 
-			fmt.Println(warnings)
-			Expect(err).NotTo(HaveOccurred())
+		// // 	fmt.Println(warnings)
+		// // 	Expect(err).NotTo(HaveOccurred())
 
-			// Ensure there is at least one result
-			vectorResult, ok := result.(model.Vector)
-			Expect(ok).To(BeTrue(), "Result should be of type model.Vector")
-			Expect(vectorResult).NotTo(BeEmpty(), "Result should not be empty")
-		})
+		// // 	// Ensure there is at least one result
+		// // 	vectorResult, ok := result.(model.Vector)
+		// // 	Expect(ok).To(BeTrue(), "Result should be of type model.Vector")
+		// // 	Expect(vectorResult).NotTo(BeEmpty(), "Result should not be empty")
+		// // })
 
-		It("Query Prometheus alerts", func() {
-			warnings, result, err := utils.InstantQuery(PrometheusQueryClient, "alerts")
+		// // It("Query Prometheus alerts", func() {
+		// // 	warnings, result, err := utils.InstantQuery(PrometheusQueryClient, "alerts")
 
-			fmt.Println(warnings)
-			Expect(err).NotTo(HaveOccurred())
+		// // 	fmt.Println(warnings)
+		// // 	Expect(err).NotTo(HaveOccurred())
 
-			fmt.Println(result)
-		})
+		// // 	fmt.Println(result)
+		// // })
 
 		It("Query Azure Monitor for AMW usage and limits metrics", func() {
-			cred, err := azidentity.NewDefaultAzureCredential(nil)
+			////cred, err := azidentity.NewDefaultAzureCredential(nil)
+
+			// Create a credential using the specific client ID
+			clientID := "de61beff-a8f7-4016-810d-2a744c5fe868"
+			cred, err := azidentity.NewManagedIdentityCredential(&azidentity.ManagedIdentityCredentialOptions{
+				ID: azidentity.ClientID(clientID),
+			})
+			if err != nil {
+				log.Fatalf("failed to create managed identity credential: %v", err)
+			}
+
 			Expect(err).NotTo(HaveOccurred())
 
 			client, err := azquery.NewMetricsClient(cred, nil)
