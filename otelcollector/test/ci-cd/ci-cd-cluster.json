@@ -59,7 +59,7 @@
     },
     "clusterName": {
       "type": "string",
-      "defaultValue": "ci-dev-aks-",
+      "defaultValue": "aksDemoCluster",
       "metadata": {
         "description": "The name of the Managed Cluster resource."
       }
@@ -187,9 +187,16 @@
     },
     "actionGroupId": {
       "type": "string",
-      "defaultValue": "/subscriptions/13d371f9-5a39-46d5-8e1b-60158c49db84/resourceGroups/ContainerInsightsPrometheusCollector-Prod/providers/microsoft.insights/actiongroups/AMA-PrometheusCollectorAlertGroup",
+      "defaultValue": "/subscriptions/b9842c7c-1a38-4385-8f39-a51314758bcf/resourceGroups/wtd-ev2/providers/Microsoft.Insights/actiongroups/wtdTestAg",
       "metadata": {
         "description": "Action group used for alerts"
+      }
+    },
+    "vnetName": {
+      "type": "string",
+      "defaultValue": "aksVnet",
+      "metadata": {
+        "description": ""
       }
     }
   },
@@ -214,6 +221,50 @@
   },
   "resources": [
     {
+      "type": "Microsoft.Network/virtualNetworks",
+      "apiVersion": "2022-07-01",
+      "name": "[parameters('vnetName')]",
+      "location": "[parameters('clusterLocation')]",
+      "properties": {
+        "addressSpace": {
+          "addressPrefixes": [
+            "10.0.0.0/16"
+          ]
+        },
+        "subnets": [
+          {
+            "name": "aksSubnet",
+            "properties": {
+              "addressPrefix": "10.0.0.0/24",
+              "delegations": [
+                {
+                  "name": "aksDelegation",
+                  "properties": {
+                    "serviceName": "Microsoft.ContainerService/managedClusters"
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "name": "shellSubnet",
+            "properties": {
+              "addressPrefix": "10.0.1.0/24",
+              "delegations": [
+                {
+                  "name": "shellDelegation",
+                  "properties": {
+                    "serviceName": "Microsoft.ContainerInstance/containerGroups"
+                  }
+                }
+              ]             
+            }
+          }
+        ]
+      }
+    },
+
+    {
       "type": "microsoft.monitor/accounts",
       "apiVersion": "2021-06-03-preview",
       "name": "[variables('azureMonitorWorkspaceName')]",
@@ -223,7 +274,7 @@
     },
     {
       "type": "Microsoft.ContainerService/managedClusters",
-      "apiVersion": "[parameters('clusterApiVersion')]",
+      "apiVersion": "2025-02-01",
       "name": "[parameters('clusterName')]",
       "location": "[parameters('clusterLocation')]",
       "identity": {
@@ -249,9 +300,13 @@
               },
               "backendPoolType": "nodeIPConfiguration"
           },
-          "serviceCidr": "10.0.0.0/16",
-          "dnsServiceIP": "10.0.0.10",
-          "outboundType": "loadBalancer"
+          "serviceCidr": "10.0.2.0/24",
+          "dnsServiceIP": "10.0.2.10",
+          "outboundType": "loadBalancer",
+          "podCidr": ""
+          //"serviceCidr": "10.0.0.0/16",
+          //"dnsServiceIP": "10.0.0.10",
+          //"outboundType": "loadBalancer"
         },
         "agentPoolProfiles": [
           {
