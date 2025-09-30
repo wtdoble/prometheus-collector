@@ -1,53 +1,48 @@
 // Copyright The OpenTelemetry Authors
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// SPDX-License-Identifier: Apache-2.0
 
 package main
 
 import (
+	"strings"
 	"context"
 	"fmt"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
 
-	gokitlog "github.com/go-kit/log"
 	"github.com/oklog/run"
+	monitoringclient "github.com/prometheus-operator/prometheus-operator/pkg/client/versioned"
 	"github.com/prometheus/client_golang/prometheus"
-	"github.com/prometheus/client_golang/prometheus/promauto"
 	"github.com/prometheus/prometheus/discovery"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	otelprom "go.opentelemetry.io/otel/exporters/prometheus"
+	"go.opentelemetry.io/otel/metric"
+	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
+	"k8s.io/client-go/kubernetes"
 	_ "k8s.io/client-go/plugin/pkg/client/auth/gcp"
 	ctrl "sigs.k8s.io/controller-runtime"
 
-	"github.com/open-telemetry/opentelemetry-operator/cmd/otel-allocator/allocation"
-	"github.com/open-telemetry/opentelemetry-operator/cmd/otel-allocator/collector"
-	"github.com/open-telemetry/opentelemetry-operator/cmd/otel-allocator/config"
-	"github.com/open-telemetry/opentelemetry-operator/cmd/otel-allocator/prehook"
-	"github.com/open-telemetry/opentelemetry-operator/cmd/otel-allocator/server"
-	"github.com/open-telemetry/opentelemetry-operator/cmd/otel-allocator/target"
-	allocatorWatcher "github.com/open-telemetry/opentelemetry-operator/cmd/otel-allocator/watcher"
+	"github.com/open-telemetry/opentelemetry-operator/cmd/otel-allocator/internal/allocation"
+	"github.com/open-telemetry/opentelemetry-operator/cmd/otel-allocator/internal/collector"
+	"github.com/open-telemetry/opentelemetry-operator/cmd/otel-allocator/internal/config"
+	"github.com/open-telemetry/opentelemetry-operator/cmd/otel-allocator/internal/prehook"
+	"github.com/open-telemetry/opentelemetry-operator/cmd/otel-allocator/internal/server"
+	"github.com/open-telemetry/opentelemetry-operator/cmd/otel-allocator/internal/target"
+	allocatorWatcher "github.com/open-telemetry/opentelemetry-operator/cmd/otel-allocator/internal/watcher"
 )
 
 var (
-	setupLog     = ctrl.Log.WithName("setup")
-	eventsMetric = promauto.NewCounterVec(prometheus.CounterOpts{
-		Name: "opentelemetry_allocator_events",
-		Help: "Number of events in the channel.",
-	}, []string{"source"})
+	setupLog = ctrl.Log.WithName("setup")
 )
 
 func main() {
+	// EULA statement is required for Arc extension
+	clusterResourceId := os.Getenv("CLUSTER")
+	if strings.EqualFold(clusterResourceId, "connectedclusters") {
+		setupLog.Info("MICROSOFT SOFTWARE LICENSE TERMS\n\nMICROSOFT Azure Arc-enabled Kubernetes\n\nThis software is licensed to you as part of your or your company's subscription license for Microsoft Azure Services. You may only use the software with Microsoft Azure Services and subject to the terms and conditions of the agreement under which you obtained Microsoft Azure Services. If you do not have an active subscription license for Microsoft Azure Services, you may not use the software. Microsoft Azure Legal Information: https://azure.microsoft.com/en-us/support/legal/")
+	}
 	var (
 		// allocatorPrehook will be nil if filterStrategy is not set or
 		// unrecognized. No filtering will be used in this case.
@@ -55,7 +50,6 @@ func main() {
 		allocator        allocation.Allocator
 		discoveryManager *discovery.Manager
 		collectorWatcher *collector.Watcher
-		promWatcher      allocatorWatcher.Watcher
 		targetDiscoverer *target.Discoverer
 
 		discoveryCancel context.CancelFunc
@@ -65,16 +59,9 @@ func main() {
 		interrupts      = make(chan os.Signal, 1)
 		errChan         = make(chan error)
 	)
-
-	// EULA statement is required for Arc extension
-	clusterResourceId := os.Getenv("CLUSTER")
-	if strings.EqualFold(clusterResourceId, "connectedclusters") {
-		setupLog.Info("MICROSOFT SOFTWARE LICENSE TERMS\n\nMICROSOFT Azure Arc-enabled Kubernetes\n\nThis software is licensed to you as part of your or your company's subscription license for Microsoft Azure Services. You may only use the software with Microsoft Azure Services and subject to the terms and conditions of the agreement under which you obtained Microsoft Azure Services. If you do not have an active subscription license for Microsoft Azure Services, you may not use the software. Microsoft Azure Legal Information: https://azure.microsoft.com/en-us/support/legal/")
-	}
-
-	cfg, err := config.Load()
-	if err != nil {
-		fmt.Printf("Failed to load config: %v", err)
+	cfg, loadErr := config.Load(os.Args)
+	if loadErr != nil {
+		fmt.Printf("Failed to load config: %v", loadErr)
 		os.Exit(1)
 	}
 	ctrl.SetLogger(cfg.RootLogger)
@@ -88,10 +75,28 @@ func main() {
 	ctx := context.Background()
 	log := ctrl.Log.WithName("allocator")
 
-	allocatorPrehook = prehook.New(cfg.FilterStrategy, log)
-	allocator, err = allocation.New(cfg.AllocationStrategy, log, allocation.WithFilter(allocatorPrehook), allocation.WithFallbackStrategy(cfg.AllocationFallbackStrategy))
+	k8sClient, err := kubernetes.NewForConfig(cfg.ClusterConfig)
 	if err != nil {
-		setupLog.Error(err, "Unable to initialize allocation strategy")
+		setupLog.Error(err, "Unable to initialize kubernetes client")
+		os.Exit(1)
+	}
+	monitoringClient, err := monitoringclient.NewForConfig(cfg.ClusterConfig)
+	if err != nil {
+		setupLog.Error(err, "Unable to initialize monitoring client")
+		os.Exit(1)
+	}
+
+	metricExporter, promErr := otelprom.New()
+	if promErr != nil {
+		panic(promErr)
+	}
+	meterProvider := sdkmetric.NewMeterProvider(sdkmetric.WithReader(metricExporter))
+	otel.SetMeterProvider(meterProvider)
+
+	allocatorPrehook = prehook.New(cfg.FilterStrategy, log)
+	allocator, allocErr := allocation.New(cfg.AllocationStrategy, log, allocation.WithFilter(allocatorPrehook), allocation.WithFallbackStrategy(cfg.AllocationFallbackStrategy))
+	if allocErr != nil {
+		setupLog.Error(allocErr, "Unable to initialize allocation strategy")
 		os.Exit(1)
 	}
 
@@ -104,18 +109,24 @@ func main() {
 		}
 		httpOptions = append(httpOptions, server.WithTLSConfig(tlsConfig, cfg.HTTPS.ListenAddr))
 	}
-	srv := server.NewServer(log, allocator, cfg.ListenAddr, httpOptions...)
+	srv, serverErr := server.NewServer(log, allocator, cfg.ListenAddr, httpOptions...)
+	if serverErr != nil {
+		panic(serverErr)
+	}
 
 	discoveryCtx, discoveryCancel := context.WithCancel(ctx)
-	sdMetrics, err := discovery.CreateAndRegisterSDMetrics(prometheus.DefaultRegisterer)
-	if err != nil {
-		setupLog.Error(err, "Unable to register metrics for Prometheus service discovery")
+	sdMetrics, discErr := discovery.CreateAndRegisterSDMetrics(prometheus.DefaultRegisterer)
+	if discErr != nil {
+		setupLog.Error(discErr, "Unable to register metrics for Prometheus service discovery")
 		os.Exit(1)
 	}
-	discoveryManager = discovery.NewManager(discoveryCtx, gokitlog.NewNopLogger(), prometheus.DefaultRegisterer, sdMetrics)
+	discoveryManager = discovery.NewManager(discoveryCtx, config.NopLogger, prometheus.DefaultRegisterer, sdMetrics)
 
-	targetDiscoverer = target.NewDiscoverer(log, discoveryManager, allocatorPrehook, srv, allocator.SetTargets)
-	collectorWatcher, collectorWatcherErr := collector.NewCollectorWatcher(log, cfg.ClusterConfig)
+	targetDiscoverer, targetErr := target.NewDiscoverer(log, discoveryManager, allocatorPrehook, srv, allocator.SetTargets)
+	if targetErr != nil {
+		panic(targetErr)
+	}
+	collectorWatcher, collectorWatcherErr := collector.NewCollectorWatcher(log, k8sClient, cfg.CollectorNotReadyGracePeriod)
 	if collectorWatcherErr != nil {
 		setupLog.Error(collectorWatcherErr, "Unable to initialize collector watcher")
 		os.Exit(1)
@@ -124,20 +135,21 @@ func main() {
 	defer close(interrupts)
 
 	if cfg.PrometheusCR.Enabled {
-		promWatcher, err = allocatorWatcher.NewPrometheusCRWatcher(ctx, setupLog.WithName("prometheus-cr-watcher"), *cfg)
-		if err != nil {
-			setupLog.Error(err, "Can't start the prometheus watcher")
+		promWatcher, allocErr := allocatorWatcher.NewPrometheusCRWatcher(
+			ctx, setupLog.WithName("prometheus-cr-watcher"), k8sClient, monitoringClient, *cfg)
+		if allocErr != nil {
+			setupLog.Error(allocErr, "Can't start the prometheus watcher")
 			os.Exit(1)
 		}
 		// apply the initial configuration
 		promConfig, loadErr := promWatcher.LoadConfig(ctx)
 		if loadErr != nil {
-			setupLog.Error(err, "Can't load initial Prometheus configuration from Prometheus CRs")
+			setupLog.Error(loadErr, "Can't load initial Prometheus configuration from Prometheus CRs")
 			os.Exit(1)
 		}
 		loadErr = targetDiscoverer.ApplyConfig(allocatorWatcher.EventSourcePrometheusCR, promConfig.ScrapeConfigs)
 		if loadErr != nil {
-			setupLog.Error(err, "Can't load initial scrape targets from Prometheus CRs")
+			setupLog.Error(loadErr, "Can't load initial scrape targets from Prometheus CRs")
 			os.Exit(1)
 		}
 		runGroup.Add(
@@ -168,8 +180,8 @@ func main() {
 		func() error {
 			// Initial loading of the config file's scrape config
 			if cfg.PromConfig != nil && len(cfg.PromConfig.ScrapeConfigs) > 0 {
-				err = targetDiscoverer.ApplyConfig(allocatorWatcher.EventSourceConfigMap, cfg.PromConfig.ScrapeConfigs)
-				if err != nil {
+				applyErr := targetDiscoverer.ApplyConfig(allocatorWatcher.EventSourceConfigMap, cfg.PromConfig.ScrapeConfigs)
+				if applyErr != nil {
 					setupLog.Error(err, "Unable to apply initial configuration")
 					return err
 				}
@@ -177,9 +189,9 @@ func main() {
 				setupLog.Info("Prometheus config empty, skipping initial discovery configuration")
 			}
 
-			err := targetDiscoverer.Run()
+			tErr := targetDiscoverer.Run()
 			setupLog.Info("Target discoverer exited")
-			return err
+			return tErr
 		},
 		func(_ error) {
 			setupLog.Info("Closing target discoverer")
@@ -187,9 +199,9 @@ func main() {
 		})
 	runGroup.Add(
 		func() error {
-			err := collectorWatcher.Watch(cfg.CollectorSelector, allocator.SetCollectors)
+			watchErr := collectorWatcher.Watch(cfg.CollectorNamespace, cfg.CollectorSelector, allocator.SetCollectors)
 			setupLog.Info("Collector watcher exited")
-			return err
+			return watchErr
 		},
 		func(_ error) {
 			setupLog.Info("Closing collector watcher")
@@ -197,9 +209,9 @@ func main() {
 		})
 	runGroup.Add(
 		func() error {
-			err := srv.Start()
+			startErr := srv.Start()
 			setupLog.Info("Server failed to start")
-			return err
+			return startErr
 		},
 		func(_ error) {
 			setupLog.Info("Closing server")
@@ -210,9 +222,9 @@ func main() {
 	if cfg.HTTPS.Enabled {
 		runGroup.Add(
 			func() error {
-				err := srv.StartHTTPS()
+				startErr := srv.StartHTTPS()
 				setupLog.Info("HTTPS Server failed to start")
-				return err
+				return startErr
 			},
 			func(_ error) {
 				setupLog.Info("Closing HTTPS server")
@@ -221,12 +233,17 @@ func main() {
 				}
 			})
 	}
+	meter := otel.GetMeterProvider().Meter("targetallocator")
+	eventsMetric, err := meter.Int64Counter("opentelemetry_allocator_events", metric.WithDescription("Number of events in the channel."))
+	if err != nil {
+		panic(err)
+	}
 	runGroup.Add(
 		func() error {
 			for {
 				select {
 				case event := <-eventChan:
-					eventsMetric.WithLabelValues(event.Source.String()).Inc()
+					eventsMetric.Add(context.Background(), 1, metric.WithAttributes(attribute.String("source", event.Source.String())))
 					loadConfig, err := event.Watcher.LoadConfig(ctx)
 					if err != nil {
 						setupLog.Error(err, "Unable to load configuration")

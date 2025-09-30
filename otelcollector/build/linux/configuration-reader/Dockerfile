@@ -6,9 +6,13 @@ RUN apt-get update && apt-get install -y gcc-aarch64-linux-gnu
 
 COPY ./prom-config-validator-builder/go.mod ./prom-config-validator-builder/go.sum ./prom-config-validator-builder/
 COPY ./prometheusreceiver/go.mod ./prometheusreceiver/go.sum ./prometheusreceiver/
+COPY ./shared/go.mod ./shared/go.sum ./shared/
 
 WORKDIR /src/prometheusreceiver
 RUN go version
+RUN go mod download
+
+WORKDIR /src/shared
 RUN go mod download
 
 WORKDIR /src/prom-config-validator-builder
@@ -16,6 +20,7 @@ RUN go mod download
 
 COPY ./prom-config-validator-builder /src/prom-config-validator-builder
 COPY ./prometheusreceiver /src/prometheusreceiver
+COPY ./shared /src/shared
 
 ARG TARGETOS TARGETARCH
 RUN if [ "$TARGETARCH" = "arm64" ]; then \
@@ -31,6 +36,9 @@ WORKDIR /src
 RUN apt-get update && apt-get install -y gcc-aarch64-linux-gnu
 
 COPY ./configuration-reader-builder/go.mod ./configuration-reader-builder/go.sum ./configuration-reader-builder/
+COPY ./configuration-reader-builder/certcreator/go.mod ./configuration-reader-builder/certcreator/
+COPY ./configuration-reader-builder/certgenerator/go.mod ./configuration-reader-builder/certgenerator/
+COPY ./configuration-reader-builder/certoperator/go.mod ./configuration-reader-builder/certoperator/
 RUN go version > goversion.txt
 
 COPY ./shared /src/shared
@@ -48,7 +56,7 @@ RUN if [ "$TARGETARCH" = "arm64" ]; then \
     fi
 
 # Stage 3: builder
-FROM mcr.microsoft.com/cbl-mariner/base/core:2.0 as builder
+FROM mcr.microsoft.com/azurelinux/base/core:3.0 as builder
 LABEL description="Azure Monitor Prometheus metrics collector - configuration reader sidecar"
 LABEL maintainer="ciprometheus@microsoft.com"
 
@@ -78,7 +86,7 @@ RUN tdnf clean all && tdnf repolist --refresh && tdnf update -y && tdnf install 
     $tmpdir/setup-configreader.sh ${TARGETARCH}
 
 # Stage 4: final
-FROM mcr.microsoft.com/cbl-mariner/distroless/base:2.0
+FROM mcr.microsoft.com/azurelinux/distroless/base:3.0
 
 ENV PATH="/busybin:${PATH}" OS_TYPE="linux"
 
@@ -101,27 +109,25 @@ COPY --from=builder /bin/sh /bin/sh
 COPY --from=builder /opt/microsoft/configmapparser /opt/microsoft/configmapparser
 
 # bash dependencies
-COPY --from=builder /lib/libreadline.so.8 /lib/
-COPY --from=builder /usr/lib/libncursesw.so.6 /usr/lib/libtinfo.so.6 /usr/lib/
+COPY --from=builder /usr/lib/libreadline.so.8 /usr/lib/libc.so.6 /usr/lib/libncursesw.so.6 /usr/lib/libtinfo.so.6 /usr/lib/
 
 # inotifywait dependencies
-COPY --from=builder /lib/libinotifytools.so.0 /lib/
+COPY --from=builder /usr/lib/libinotifytools.so.0 /usr/lib/libstdc++.so.6 /usr/lib/libgcc_s.so.1 /usr/lib/libc.so.6 /usr/lib/libm.so.6 /usr/lib/
 
 # crond dependencies
-COPY --from=builder /lib/libselinux.so.1 /lib/libpam.so.0 /lib/libc.so.6 /lib/libpcre.so.1 /lib/libaudit.so.1 /lib/libcap-ng.so.0/ /lib/
+COPY --from=builder /usr/lib/libselinux.so.1 /usr/lib/libpam.so.0 /usr/lib/libc.so.6 /usr/lib/
 
 # vim dependencies
-COPY --from=builder /lib/libm.so.6 /lib/libtinfo.so.6 /lib/
+COPY --from=builder /usr/lib/libm.so.6 /usr/lib/libtinfo.so.6 /usr/lib/libc.so.6 /usr/lib/
 
 # logrotate dependencies
-COPY --from=builder /lib/libselinux.so.1 /lib/libpopt.so.0 /lib/libpcre.so.1 /lib/
+COPY --from=builder /usr/lib/libpopt.so.0 /usr/lib/libc.so.6 /usr/lib/
 
 # curl dependencies
-COPY --from=builder /lib/libcurl.so.4 /lib/libz.so.1 /lib/libc.so.6 /lib/libnghttp2.so.14 /lib/libssh2.so.1 /lib/libgssapi_krb5.so.2 /lib/libzstd.so.1 /lib/
-COPY --from=builder /usr/lib/libkrb5.so.3 /usr/lib/libk5crypto.so.3 /usr/lib/libcom_err.so.2 /usr/lib/libkrb5support.so.0 /usr/lib/libresolv.so.2 /usr/lib/
+COPY --from=builder /usr/lib/libcurl.so.4 /usr/lib/libz.so.1 /usr/lib/libc.so.6 /usr/lib/libnghttp2.so.14 /usr/lib/libssh2.so.1 /usr/lib/libgssapi_krb5.so.2 /usr/lib/libzstd.so.1 /usr/lib/libkrb5.so.3 /usr/lib/libk5crypto.so.3 /usr/lib/libcom_err.so.2 /usr/lib/libkrb5support.so.0 /usr/lib/libresolv.so.2 /usr/lib/
 
 # sh dependencies
-COPY --from=builder /lib/libreadline.so.8 /lib/libc.so.6 /usr/lib/libncursesw.so.6 /usr/lib/libtinfo.so.6 /lib/
+COPY --from=builder /usr/lib/libreadline.so.8 /usr/lib/libc.so.6 /usr/lib/libncursesw.so.6 /usr/lib/libtinfo.so.6 /usr/lib/
 
 COPY --from=configuration-reader-builder /src/configuration-reader-builder/configurationreader $tmpdir/
 COPY --from=builder /opt/*.sh $tmpdir/

@@ -50,7 +50,7 @@ func SetEnvAndSourceBashrcOrPowershell(key, value string, echo bool) error {
 	// Set the environment variable
 	err := os.Setenv(key, value)
 	if err != nil {
-		fmt.Println("error in SetEnvAndSourceBashrcOrPowershell when setting key:", key, ":value:" , value, ":error:", err)
+		fmt.Println("error in SetEnvAndSourceBashrcOrPowershell when setting key:", key, ":value:", value, ":error:", err)
 		return fmt.Errorf("failed to set environment variable: %v", err)
 	}
 
@@ -268,8 +268,13 @@ func copyOutputFile(src io.Reader, file *os.File) {
 	}
 }
 
-func StartMetricsExtensionForOverlay(meConfigFile string) (int, error) {
-	cmd := exec.Command("/usr/sbin/MetricsExtension", "-Logger", "File", "-LogLevel", "Info", "-LocalControlChannel", "-TokenSource", "AMCS", "-DataDirectory", "/etc/mdsd.d/config-cache/metricsextension", "-Input", "otlp_grpc_prom", "-ConfigOverridesFilePath", meConfigFile)
+func StartMetricsExtensionForOverlay(meConfigFile string, meDCRConfigDirectory string, meLocalControl bool) (int, error) {
+	var cmd *exec.Cmd
+	if meLocalControl {
+		cmd = exec.Command("/usr/sbin/MetricsExtension", "-Logger", "File", "-LogLevel", "Info", "-LocalControlChannel", "-TokenSource", "AMCS", "-DataDirectory", meDCRConfigDirectory, "-Input", "otlp_grpc_prom", "-ConfigOverridesFilePath", meConfigFile)
+	} else {
+		cmd = exec.Command("/usr/sbin/MetricsExtension", "-Logger", "File", "-LogLevel", "Info", "-TokenSource", "AMCS", "-DataDirectory", meDCRConfigDirectory, "-Input", "otlp_grpc_prom,otlp_grpc,otlp_http", "-OtlpHttpHost", "http://0.0.0.0", "-OtlpHttpPort", "56681", "-ConfigOverridesFilePath", meConfigFile)
+	}
 	// Set environment variables from os.Environ()
 	cmd.Env = append(os.Environ())
 	// Start the command
@@ -280,8 +285,13 @@ func StartMetricsExtensionForOverlay(meConfigFile string) (int, error) {
 	return cmd.Process.Pid, nil
 }
 
-func StartMetricsExtensionWithConfigOverridesForUnderlay(configOverrides string) {
-	cmd := exec.Command("/usr/sbin/MetricsExtension", "-Logger", "Console", "-LogLevel", "Error", "-LocalControlChannel", "-TokenSource", "AMCS", "-DataDirectory", "/etc/mdsd.d/config-cache/metricsextension", "-Input", "otlp_grpc_prom", "-ConfigOverridesFilePath", "/usr/sbin/me.config")
+func StartMetricsExtensionWithConfigOverridesForUnderlay(configOverrides string, meDCRConfigDirectory string, meLocalControl bool) {
+	var cmd *exec.Cmd
+	if meLocalControl {
+		cmd = exec.Command("/usr/sbin/MetricsExtension", "-Logger", "File", "-LogLevel", "Info", "-LocalControlChannel", "-TokenSource", "AMCS", "-DataDirectory", meDCRConfigDirectory, "-Input", "otlp_grpc_prom", "-ConfigOverridesFilePath", configOverrides)
+	} else {
+		cmd = exec.Command("/usr/sbin/MetricsExtension", "-Logger", "File", "-LogLevel", "Info", "-TokenSource", "AMCS", "-DataDirectory", meDCRConfigDirectory, "-Input", "otlp_grpc_prom,otlp_grpc,otlp_http", "-OtlpHttpHost", "http://0.0.0.0", "-OtlpHttpPort", "56681", "-ConfigOverridesFilePath", configOverrides)
+	}
 
 	// Create a file to store the stdoutput
 	// metricsextension_stdout_file, err := os.Create("metricsextension_stdout.log")
@@ -455,19 +465,26 @@ func StartFluentBit(fluentBitConfigFile string) {
 	fmt.Println("Starting fluent-bit")
 
 	if err := os.Mkdir("/opt/microsoft/fluent-bit", 0755); err != nil && !os.IsExist(err) {
-		log.Fatalf("Error creating directory: %v\n", err)
+		fmt.Errorf("Error creating directory: %v\n", err)
 	}
 
 	logFile, err := os.Create("/opt/microsoft/fluent-bit/fluent-bit-out-appinsights-runtime.log")
 	if err != nil {
-		log.Fatalf("Error creating log file: %v\n", err)
+		fmt.Errorf("Error creating log file: %v\n", err)
 	}
 	defer logFile.Close()
+	if os.Getenv("AZMON_OPERATOR_HTTPS_ENABLED") == "true" {
+		SetEnvAndSourceBashrcOrPowershell("FLUENT_BIT_OPERATOR_TARGETS_TLS_SETTING", "on", true)
+		SetEnvAndSourceBashrcOrPowershell("FLUENT_BIT_OPERATOR_TARGETS_PROMETHEUS_PORT", "443", true)
+	} else {
+		SetEnvAndSourceBashrcOrPowershell("FLUENT_BIT_OPERATOR_TARGETS_TLS_SETTING", "off", true)
+		SetEnvAndSourceBashrcOrPowershell("FLUENT_BIT_OPERATOR_TARGETS_PROMETHEUS_PORT", "80", true)
+	}
 
 	fluentBitCmd := exec.Command("fluent-bit", "-c", fluentBitConfigFile, "-e", "/opt/fluent-bit/bin/out_appinsights.so")
 	fluentBitCmd.Stdout = os.Stdout
 	fluentBitCmd.Stderr = os.Stderr
 	if err := fluentBitCmd.Start(); err != nil {
-		log.Fatalf("Error starting fluent-bit: %v\n", err)
+		fmt.Errorf("Error starting fluent-bit: %v\n", err)
 	}
 }

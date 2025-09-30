@@ -27,10 +27,12 @@ func (fcl *FilesystemConfigLoader) SetDefaultScrapeSettings() (map[string]string
 	config["noDefaultsEnabled"] = "false"
 	config["acstor-capacity-provisioner"] = "true"
 	config["acstor-metrics-exporter"] = "true"
+	config["local-csi-driver"] = "true"
+
 	return config, nil
 }
 
-func (fcl *FilesystemConfigLoader) ParseConfigMapForDefaultScrapeSettings() (map[string]string, error) {
+func (fcl *FilesystemConfigLoader) ParseConfigMapForDefaultScrapeSettings(metricsConfigBySection map[string]map[string]string, schemaVersion string) (map[string]string, error) {
 	config := make(map[string]string)
 	// Set default values
 	config["kubelet"] = "true"
@@ -50,30 +52,22 @@ func (fcl *FilesystemConfigLoader) ParseConfigMapForDefaultScrapeSettings() (map
 	config["noDefaultsEnabled"] = "false"
 	config["acstor-capacity-provisioner"] = "true"
 	config["acstor-metrics-exporter"] = "true"
+	config["local-csi-driver"] = "true"
 
-	if _, err := os.Stat(fcl.ConfigMapMountPath); os.IsNotExist(err) {
-		fmt.Println("configmap for default scrape settings not mounted, using defaults")
-		return config, nil
+	configSectionName := "default-scrape-settings-enabled"
+	if schemaVersion == "v2" {
+		configSectionName = "default-targets-scrape-enabled"
 	}
-
-	content, err := os.ReadFile(string(fcl.ConfigMapMountPath))
-	if err != nil {
-		return config, fmt.Errorf("using default values, error reading config map file: %s", err)
-	}
-
-	lines := strings.Split(string(content), "\n")
-	for _, line := range lines {
-		parts := strings.SplitN(line, "=", 2)
-		if len(parts) == 2 {
-			key := strings.TrimSpace(parts[0])
-			value := strings.TrimSpace(parts[1])
+	// Override defaults with values from metricsConfigBySection
+	if settings, ok := metricsConfigBySection[configSectionName]; ok {
+		for key, value := range settings {
 			if _, ok := config[key]; ok {
 				config[key] = value
 			}
 		}
 	}
 
-	fmt.Println("using configmap for default scrape settings...")
+	fmt.Println("Using configmap for default scrape settings...")
 	return config, nil
 }
 
@@ -158,6 +152,11 @@ func (cp *ConfigProcessor) PopulateSettingValues(parsedConfig map[string]string)
 		fmt.Printf("config:: Using scrape settings for acstor-metrics-exporter: %v\n", cp.AcstorMetricsExporter)
 	}
 
+	if val, ok := parsedConfig["local-csi-driver"]; ok && val != "" {
+		cp.LocalCSIDriver = val
+		fmt.Printf("config:: Using scrape settings for local-csi-driver: %v\n", cp.LocalCSIDriver)
+	}
+
 	if os.Getenv("MODE") == "" && strings.ToLower(strings.TrimSpace(os.Getenv("MODE"))) == "advanced" {
 		controllerType := os.Getenv("CONTROLLER_TYPE")
 		if controllerType == "ReplicaSet" && strings.ToLower(os.Getenv("OS_TYPE")) == "linux" &&
@@ -199,11 +198,12 @@ func (fcw *FileConfigWriter) WriteDefaultScrapeSettingsToFile(filename string, c
 	file.WriteString(fmt.Sprintf("AZMON_PROMETHEUS_NO_DEFAULT_SCRAPING_ENABLED=%v\n", cp.NoDefaultsEnabled))
 	file.WriteString(fmt.Sprintf("AZMON_PROMETHEUS_ACSTORCAPACITYPROVISIONER_SCRAPING_ENABLED=%v\n", cp.AcstorCapacityProvisioner))
 	file.WriteString(fmt.Sprintf("AZMON_PROMETHEUS_ACSTORMETRICSEXPORTER_SCRAPING_ENABLED=%v\n", cp.AcstorMetricsExporter))
+	file.WriteString(fmt.Sprintf("AZMON_PROMETHEUS_LOCALCSIDRIVER_SCRAPING_ENABLED=%v\n", cp.LocalCSIDriver))
 
 	return nil
 }
 
-func (c *Configurator) ConfigureDefaultScrapeSettings() {
+func (c *Configurator) ConfigureDefaultScrapeSettings(metricsConfigBySection map[string]map[string]string) {
 	configSchemaVersion := os.Getenv("AZMON_AGENT_CFG_SCHEMA_VERSION")
 
 	fmt.Printf("Start prometheus-collector-settings Processing\n")
@@ -211,8 +211,8 @@ func (c *Configurator) ConfigureDefaultScrapeSettings() {
 	// Load default settings based on the schema version
 	var defaultSettings map[string]string
 	var err error
-	if configSchemaVersion != "" && strings.TrimSpace(configSchemaVersion) == "v1" {
-		defaultSettings, err = c.ConfigLoader.ParseConfigMapForDefaultScrapeSettings()
+	if configSchemaVersion != "" && (strings.TrimSpace(configSchemaVersion) == "v1" || strings.TrimSpace(configSchemaVersion) == "v2") {
+		defaultSettings, err = c.ConfigLoader.ParseConfigMapForDefaultScrapeSettings(metricsConfigBySection, configSchemaVersion)
 	} else {
 		defaultSettings, err = c.ConfigLoader.SetDefaultScrapeSettings()
 	}
@@ -249,13 +249,20 @@ func (c *Configurator) ConfigureDefaultScrapeSettings() {
 	fmt.Printf("End prometheus-collector-settings Processing\n")
 }
 
-func tomlparserDefaultScrapeSettings() {
+func tomlparserDefaultScrapeSettings(metricsConfigBySection map[string]map[string]string) {
+
+	configSchemaVersion := os.Getenv("AZMON_AGENT_CFG_SCHEMA_VERSION")
+	configLoaderPath := defaultSettingsMountPath
+	if configSchemaVersion != "" && strings.TrimSpace(configSchemaVersion) == "v2" {
+		configLoaderPath = defaultSettingsMountPathv2
+	}
+
 	configurator := &Configurator{
-		ConfigLoader:   &FilesystemConfigLoader{ConfigMapMountPath: defaultSettingsMountPath},
+		ConfigLoader:   &FilesystemConfigLoader{ConfigMapMountPath: configLoaderPath},
 		ConfigWriter:   &FileConfigWriter{},
 		ConfigFilePath: defaultSettingsEnvVarPath,
 		ConfigParser:   &ConfigProcessor{},
 	}
 
-	configurator.ConfigureDefaultScrapeSettings()
+	configurator.ConfigureDefaultScrapeSettings(metricsConfigBySection)
 }

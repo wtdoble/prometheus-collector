@@ -72,6 +72,8 @@ var (
 	AcstorCapacityProvisionerKeepListRegex string
 	// ACStor Metrics Exporter keep list regex
 	AcstorMetricsExporterKeepListRegex string
+	// Local CSI Driver  keep list regex
+	LocalCSIDriverKeepListRegex string
 	// Network Observability Cilium metrics keep list regex
 	NetworkObservabilityCiliumKeepListRegex string
 	// Network Observability Hubble metrics keep list regex
@@ -107,6 +109,8 @@ var (
 	AcstorCapacityProvisionerScrapeInterval string
 	// ACStor Metrics Exporter scrape interval
 	AcstorMetricsExporterScrapeInterval string
+	// Local CSI Driver  scrape interval
+	LocalCSIDriverScrapeInterval string
 	// Network Observability Cilium metrics scrape interval
 	NetworkObservabilityCiliumScrapeInterval string
 	// Network Observability Hubble metrics scrape interval
@@ -167,7 +171,13 @@ const (
 	fluentbitFailedScrapeTag              = "prometheus.log.failedscrape"
 	keepListRegexHashFilePath             = "/opt/microsoft/configmapparser/config_def_targets_metrics_keep_list_hash"
 	intervalHashFilePath                  = "/opt/microsoft/configmapparser/config_def_targets_scrape_intervals_hash"
-	amcsConfigFilePath                    = "/etc/mdsd.d/config-cache/metricsextension/TokenConfig.json"
+	basicAuthEnabled                      = "BasicAuthEnabled"
+	bearerTokenEnabledWithFile            = "BearerTokenEnabledWithFile"
+	bearerTokenEnabledWithSecret          = "BearerTokenEnabledWithSecret"
+)
+
+var (
+	amcsConfigFilePath = "/etc/mdsd.d/config-cache/metricsextension/TokenConfig.json"
 )
 
 // SendException  send an event to the configured app insights instance
@@ -218,6 +228,10 @@ func InitializeTelemetryClient(agentVersion string) (int, error) {
 	CommonProperties["podname"] = os.Getenv(envPodName)
 	CommonProperties["helmreleasename"] = os.Getenv(envHelmReleaseName)
 	CommonProperties["osType"] = os.Getenv("OS_TYPE")
+	CommonProperties["collectorConfigWithHttps"] = os.Getenv("COLLECTOR_CONFIG_WITH_HTTPS")
+	CommonProperties["collectorConfigHttpsRemoved"] = os.Getenv("COLLECTOR_CONFIG_HTTPS_REMOVED")
+	CommonProperties["operatorTargetsHttpsEnabledChartSetting"] = os.Getenv("AZMON_OPERATOR_HTTPS_ENABLED_CHART_SETTING")
+	CommonProperties["operatorTargetsHttpsEnabled"] = os.Getenv("AZMON_OPERATOR_HTTPS_ENABLED")
 
 	isMacMode := os.Getenv("MAC")
 	if strings.Compare(strings.ToLower(isMacMode), "true") == 0 {
@@ -231,55 +245,91 @@ func InitializeTelemetryClient(agentVersion string) (int, error) {
 			CommonProperties["ClusterName"] = splitStrings[8]
 		}
 		// Reading AMCS config file for telemetry
-		amcsConfigFile, err := os.Open(amcsConfigFilePath)
-		if err != nil {
-			message := fmt.Sprintf("Error while opening AMCS config file - %v\n", err)
-			Log(message)
-			SendException(message)
-		}
-		Log("Successfully read AMCS config file contents for telemetry\n")
-		defer amcsConfigFile.Close()
-
-		amcsConfigFileContents, err := ioutil.ReadAll(amcsConfigFile)
-		if err != nil {
-			message := fmt.Sprintf("Error while reading AMCS config file contents - %v\n", err)
-			Log(message)
-			SendException(message)
-		}
-
-		var amcsConfig map[string]interface{}
-
-		err = json.Unmarshal([]byte(amcsConfigFileContents), &amcsConfig)
-		if err != nil {
-			message := fmt.Sprintf("Error while unmarshaling AMCS config file contents - %v\n", err)
-			Log(message)
-			SendException(message)
-		}
-
-		// iterate through keys and parse dcr name
-		for key, _ := range amcsConfig {
-			Log("Parsing %v for extracting DCR:", key)
-			splitKey := strings.Split(key, "/")
-			// Expecting a key in this format to extract out DCR Id -
-			// https://<dce>.eastus2euap-1.metrics.ingest.monitor.azure.com/api/v1/dataCollectionRules/<dcrid>/streams/Microsoft-PrometheusMetrics
-			if len(splitKey) == 9 {
-				dcrId := CommonProperties["DCRId"]
-				if dcrId == "" {
-					CommonProperties["DCRId"] = splitKey[6]
-				} else {
-					dcrIdArray := dcrId + ";" + splitKey[6]
-					CommonProperties["DCRId"] = dcrIdArray
-				}
-			} else {
-				message := fmt.Sprintf("AMCS token config json key contract has changed, unable to get DCR ID. Logging the entire key as DCRId")
+		otlpEnabled := os.Getenv("AZMON_FULL_OTLP_ENABLED") == "true"
+		if otlpEnabled {
+			amcsConfigFilePath = "/etc/mdsd.d/config-cache/me/dcrs"
+			// Read the AMCS config directory instead of a single file
+			files, err := os.ReadDir(amcsConfigFilePath)
+			if err != nil {
+				message := fmt.Sprintf("Error while reading AMCS config directory - %v\n", err)
 				Log(message)
 				SendException(message)
-				dcrId := CommonProperties["DCRId"]
-				if dcrId == "" {
-					CommonProperties["DCRId"] = key
+			} else {
+				Log("Successfully read AMCS config directory for telemetry\n")
+
+				// Initialize DCRId if not already present
+				if _, exists := CommonProperties["DCRId"]; !exists {
+					CommonProperties["DCRId"] = ""
+				}
+
+				// Process each file in the directory
+				for _, file := range files {
+					// Skip directories
+					if file.IsDir() {
+						continue
+					}
+
+					fileName := file.Name()
+
+					// Add the filename to DCRId with semicolon separator
+					if CommonProperties["DCRId"] == "" {
+						CommonProperties["DCRId"] = fileName
+					} else {
+						CommonProperties["DCRId"] = CommonProperties["DCRId"] + ";" + fileName
+					}
+				}
+			}
+		} else {
+			amcsConfigFile, err := os.Open(amcsConfigFilePath)
+			if err != nil {
+				message := fmt.Sprintf("Error while opening AMCS config file - %v\n", err)
+				Log(message)
+				SendException(message)
+			}
+			Log("Successfully read AMCS config file contents for telemetry\n")
+			defer amcsConfigFile.Close()
+
+			amcsConfigFileContents, err := ioutil.ReadAll(amcsConfigFile)
+			if err != nil {
+				message := fmt.Sprintf("Error while reading AMCS config file contents - %v\n", err)
+				Log(message)
+				SendException(message)
+			}
+
+			var amcsConfig map[string]interface{}
+
+			err = json.Unmarshal([]byte(amcsConfigFileContents), &amcsConfig)
+			if err != nil {
+				message := fmt.Sprintf("Error while unmarshaling AMCS config file contents - %v\n", err)
+				Log(message)
+				SendException(message)
+			}
+
+			// iterate through keys and parse dcr name
+			for key, _ := range amcsConfig {
+				Log("Parsing %v for extracting DCR:", key)
+				splitKey := strings.Split(key, "/")
+				// Expecting a key in this format to extract out DCR Id -
+				// https://<dce>.eastus2euap-1.metrics.ingest.monitor.azure.com/api/v1/dataCollectionRules/<dcrid>/streams/Microsoft-PrometheusMetrics
+				if len(splitKey) == 9 {
+					dcrId := CommonProperties["DCRId"]
+					if dcrId == "" {
+						CommonProperties["DCRId"] = splitKey[6]
+					} else {
+						dcrIdArray := dcrId + ";" + splitKey[6]
+						CommonProperties["DCRId"] = dcrIdArray
+					}
 				} else {
-					dcrIdArray := dcrId + ";" + key
-					CommonProperties["DCRId"] = dcrIdArray
+					message := fmt.Sprintf("AMCS token config json key contract has changed, unable to get DCR ID. Logging the entire key as DCRId")
+					Log(message)
+					SendException(message)
+					dcrId := CommonProperties["DCRId"]
+					if dcrId == "" {
+						CommonProperties["DCRId"] = key
+					} else {
+						dcrIdArray := dcrId + ";" + key
+						CommonProperties["DCRId"] = dcrIdArray
+					}
 				}
 			}
 		}
@@ -314,6 +364,7 @@ func InitializeTelemetryClient(agentVersion string) (int, error) {
 			KappieBasicKeepListRegex = regexHash["KAPPIEBASIC_METRICS_KEEP_LIST_REGEX"]
 			AcstorCapacityProvisionerKeepListRegex = regexHash["ACSTORCAPACITYPROVISONER_KEEP_LIST_REGEX"]
 			AcstorMetricsExporterKeepListRegex = regexHash["ACSTORMETRICSEXPORTER_KEEP_LIST_REGEX"]
+			LocalCSIDriverKeepListRegex = regexHash["LOCALCSIDRIVER_KEEP_LIST_REGEX"]
 			NetworkObservabilityCiliumKeepListRegex = regexHash["NETWORKOBSERVABILITYCILIUM_METRICS_KEEP_LIST_REGEX"]
 			NetworkObservabilityHubbleKeepListRegex = regexHash["NETWORKOBSERVABILITYHUBBLE_METRICS_KEEP_LIST_REGEX"]
 			NetworkObservabilityRetinaKeepListRegex = regexHash["NETWORKOBSERVABILITYRETINA_METRICS_KEEP_LIST_REGEX"]
@@ -345,6 +396,7 @@ func InitializeTelemetryClient(agentVersion string) (int, error) {
 			KappieBasicScrapeInterval = intervalHash["KAPPIEBASIC_SCRAPE_INTERVAL"]
 			AcstorCapacityProvisionerScrapeInterval = intervalHash["ACSTORCAPACITYPROVISIONER_SCRAPE_INTERVAL"]
 			AcstorMetricsExporterScrapeInterval = intervalHash["ACSTORMETRICSEXPORTER_SCRAPE_INTERVAL"]
+			LocalCSIDriverScrapeInterval = intervalHash["LOCALCSIDRIVER_SCRAPE_INTERVAL"]
 			NetworkObservabilityCiliumScrapeInterval = intervalHash["NETWORKOBSERVABILITYCILIUM_SCRAPE_INTERVAL"]
 			NetworkObservabilityHubbleScrapeInterval = intervalHash["NETWORKOBSERVABILITYHUBBLE_SCRAPE_INTERVAL"]
 			NetworkObservabilityRetinaScrapeInterval = intervalHash["NETWORKOBSERVABILITYRETINA_SCRAPE_INTERVAL"]
@@ -356,6 +408,7 @@ func InitializeTelemetryClient(agentVersion string) (int, error) {
 
 // Send count of cores/nodes attached to Application Insights periodically
 func SendCoreCountToAppInsightsMetrics() {
+	Log("Starting core count telemetry every %d seconds\n", coresAttachedTelemetryIntervalSeconds)
 	config, err := rest.InClusterConfig()
 	if err != nil {
 		SendException(fmt.Sprintf("Error while getting the credentials for the golang client for cores attached telemetry: %v\n", err))
@@ -421,6 +474,7 @@ func SendCoreCountToAppInsightsMetrics() {
 				}
 			}
 		}
+
 		// Send metric to app insights for node and core capacity
 		cpuCapacityTotal := float64(telemetryProperties[linuxCpuCapacityTelemetryName] + telemetryProperties[windowsCpuCapacityTelemetryName])
 		metricTelemetryItem := appinsights.NewMetricTelemetry(coresAttachedTelemetryName, cpuCapacityTotal)
@@ -428,6 +482,12 @@ func SendCoreCountToAppInsightsMetrics() {
 		for propertyName, propertyValue := range telemetryProperties {
 			if propertyValue != 0 {
 				metricTelemetryItem.Properties[propertyName] = fmt.Sprintf("%d", propertyValue)
+			}
+		}
+		scrapeConfigProperties := addScrapeJobMetadataToTelemetryItem()
+		if scrapeConfigProperties != nil {
+			for propertyName, propertyValue := range scrapeConfigProperties {
+				metricTelemetryItem.Properties[propertyName] = propertyValue
 			}
 		}
 
@@ -456,7 +516,6 @@ type Container struct {
 
 // Send Cpu and Memory Usage for our containers to Application Insights periodically
 func SendContainersCpuMemoryToAppInsightsMetrics() {
-
 	var p CadvisorJson
 	err := json.Unmarshal(retrieveKsmData(), &p)
 	if err != nil {
@@ -511,6 +570,138 @@ func GetAndSendContainerCPUandMemoryFromCadvisorJSON(container Container, cpuMet
 	TelemetryClient.Track(metricTelemetryItem)
 
 	Log(fmt.Sprintf("Sent container CPU and Mem data for %s", cpuMetricName))
+}
+
+func addScrapeJobMetadataToTelemetryItem() map[string]string {
+	telemetryPropertiesString := map[string]string{
+		basicAuthEnabled:             "false",
+		bearerTokenEnabledWithFile:   "false",
+		bearerTokenEnabledWithSecret: "false",
+	}
+	taEndpoint := "http://ama-metrics-operator-targets.kube-system.svc.cluster.local/scrape_configs"
+
+	// Send metric to app insights for target allocator metrics
+	if os.Getenv("AZMON_OPERATOR_HTTPS_ENABLED") == "true" {
+		taEndpoint = "https://ama-metrics-operator-targets.kube-system.svc.cluster.local:443/scrape_configs"
+	}
+	scrapeJobs := getTargetAllocatorResponse(taEndpoint)
+	if scrapeJobs != nil {
+		var scrapeJobsMap map[string]interface{}
+		err := json.Unmarshal(scrapeJobs, &scrapeJobsMap)
+		if err != nil {
+			Log(fmt.Sprintf("Error unmarshalling scrape jobs JSON: %v", err))
+			SendException(err)
+			return nil
+		} else {
+			hasBasicAuth := false
+			hasBearerToken := false
+			hasBearerTokenInFile := false
+			hasBearerTokenInSecret := false
+			var checkForConfigProperties func(map[string]interface{})
+			checkForConfigProperties = func(data map[string]interface{}) {
+				for _, value := range data {
+					job := value.(map[string]interface{})
+					if _, ok := job["basic_auth"]; ok {
+						hasBasicAuth = true
+						// break
+					}
+					if auth, ok := job["authorization"]; ok {
+						authValue := auth.(map[string]interface{})
+						if typeValue, ok := authValue["type"]; ok {
+							if typeValue == "Bearer" {
+								hasBearerToken = true
+							}
+							if hasBearerToken {
+								if _, ok := authValue["credentials_file"]; ok {
+									hasBearerTokenInFile = true
+								}
+								if _, ok := authValue["credentials"]; ok {
+									hasBearerTokenInSecret = true
+								}
+							}
+							// break
+						}
+					}
+
+					if hasBasicAuth && hasBearerTokenInFile && hasBearerTokenInSecret {
+						break
+					}
+				}
+			}
+			checkForConfigProperties(scrapeJobsMap)
+			if hasBasicAuth {
+				telemetryPropertiesString[basicAuthEnabled] = "true"
+			}
+
+			if hasBearerTokenInFile {
+				telemetryPropertiesString[bearerTokenEnabledWithFile] = "true"
+			}
+			if hasBearerTokenInSecret {
+				telemetryPropertiesString[bearerTokenEnabledWithSecret] = "true"
+			}
+		}
+	}
+	return telemetryPropertiesString
+
+}
+
+// Get scrape jobs for basic auth and bearer token telemetry
+func getTargetAllocatorResponse(taEndpoint string) []byte {
+	client := &http.Client{}
+	if os.Getenv("AZMON_OPERATOR_HTTPS_ENABLED") == "true" {
+		caCertPath := "/etc/operator-targets/client/certs/ca.crt"
+		certPath := "/etc/operator-targets/client/certs/client.crt"
+		keyPath := "/etc/operator-targets/client/certs/client.key"
+
+		certPEM, err := ioutil.ReadFile(caCertPath)
+		if err != nil {
+			Log(fmt.Sprintf("Unable to read ca cert file - %s\n", caCertPath))
+			SendException(err)
+			return nil
+		}
+		rootCAs := x509.NewCertPool()
+		// Append CA cert to the new pool
+		rootCAs.AppendCertsFromPEM(certPEM)
+
+		// Load client certificate and key
+		clientCert, err := tls.LoadX509KeyPair(certPath, keyPath)
+		if err != nil {
+			Log(fmt.Sprintf("Unable to load client certs - %s\n", certPath))
+			SendException(err)
+			return nil
+		}
+
+		client = &http.Client{
+			Transport: &http.Transport{
+				TLSClientConfig: &tls.Config{
+					RootCAs:      rootCAs,
+					Certificates: []tls.Certificate{clientCert},
+				},
+			},
+		}
+	}
+
+	resp, err := client.Get(taEndpoint)
+	if err != nil || resp.StatusCode != http.StatusOK {
+		Log(fmt.Sprintf("Failed to reach Target Allocator endpoint - %s\n", taEndpoint))
+		SendException(err)
+		return nil
+	} else {
+		Log(fmt.Sprintf("Successfully reached Target Allocator endpoint - %s\n", taEndpoint))
+	}
+
+	body, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		Log(fmt.Sprintf("Error reading response body: %v", err))
+		SendException(err)
+		return nil
+	}
+
+	if resp != nil && resp.Body != nil {
+		defer resp.Body.Close()
+	}
+
+	return body
 }
 
 // Retrieve the JSON payload of Kube state metrics from Cadvisor endpoint
@@ -726,6 +917,9 @@ func PushMEProcessedAndReceivedCountToAppInsightsMetrics() {
 				}
 				if AcstorMetricsExporterKeepListRegex != "" {
 					metric.Properties["AcstorMetricsExporterRegex"] = AcstorMetricsExporterKeepListRegex
+				}
+				if LocalCSIDriverKeepListRegex != "" {
+					metric.Properties["LocalCSIDriverExporterRegex"] = LocalCSIDriverKeepListRegex
 				}
 				if NetworkObservabilityCiliumKeepListRegex != "" {
 					metric.Properties["NetworkObservabilityCiliumRegex"] = NetworkObservabilityCiliumKeepListRegex

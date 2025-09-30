@@ -12,12 +12,12 @@ New-Item -Type Directory -Path /opt/microsoft/liveness -ErrorAction SilentlyCont
 New-Item -Type Directory -Path /opt/genevamonitoringagent -ErrorAction SilentlyContinue
 New-Item -Type Directory -Path /opt/genevamonitoringagent/datadirectory -ErrorAction SilentlyContinue
 New-Item -Type Directory -Path /etc/genevamonitoringagent
-New-Item -Type Directory -Path /static/react -Force -ErrorAction SilentlyContinue
+New-Item -Type Directory -Path /static/react-app -Force -ErrorAction SilentlyContinue
 ############################################################################################
 Write-Host ('Installing Metrics Extension');
 try {
-    Invoke-WebRequest -Uri "https://github.com/Azure/prometheus-collector/releases/download/metricsext2-2.2024.823.1539/MdmMetricsExtension.2.2024.823.1539.nupkg" -OutFile /installation/ME/mdmmetricsextension.2.2024.823.1539.zip
-    Expand-Archive -Path /installation/ME/mdmmetricsextension.2.2024.823.1539.zip -Destination /installation/ME/
+    Invoke-WebRequest -Uri "https://github.com/Azure/prometheus-collector/releases/download/v6.18.0-main-06-24-2025-b0275ce3/MdmMetricsExtension.2.2025.722.956.nupkg" -OutFile /installation/ME/mdmmetricsextension.2.2025.722.956.zip
+    Expand-Archive -Path /installation/ME/mdmmetricsextension.2.2025.722.956.zip -Destination /installation/ME/
     Move-Item /installation/ME/MetricsExtension /opt/metricextension/
 }
 catch {
@@ -75,7 +75,7 @@ Write-Host ('Finished downloading Telegraf')
 ############################################################################################
 Write-Host ('Installing GenevaMonitoringAgent');
 try {
-    $genevamonitoringagentUri = 'https://github.com/Azure/prometheus-collector/releases/download/Promtheus-MA-Windows-4.1.2024/GenevaMonitoringAgent.46.15.4.zip'
+    $genevamonitoringagentUri = 'https://github.com/Azure/prometheus-collector/releases/download/Promtheus-MA-Windows-4.1.2024/genevamonitoringagent.46.31.3.zip'
     Invoke-WebRequest -Uri $genevamonitoringagentUri -OutFile /installation/genevamonitoringagent.zip
     Expand-Archive -Path /installation/genevamonitoringagent.zip -Destination /installation/genevamonitoringagent
     Move-Item -Path /installation/genevamonitoringagent -Destination /opt/genevamonitoringagent/ -ErrorAction SilentlyContinue

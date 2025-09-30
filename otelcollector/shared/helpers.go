@@ -1,13 +1,14 @@
 package shared
 
 import (
+	"bufio"
 	"fmt"
 	"log"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strings"
-	"time"
 )
 
 func GetEnv(key, defaultValue string) string {
@@ -33,8 +34,26 @@ func IsValidRegex(input string) bool {
 	return err == nil
 }
 
-func DetermineConfigFiles(controllerType, clusterOverride string) (string, string) {
-	var meConfigFile, fluentBitConfigFile string
+func DetermineConfigFiles(controllerType, clusterOverride string, otlpEnabled bool) (string, string, string, bool) {
+	var meConfigFile, fluentBitConfigFile, meDCRConfigDirectory string
+	var meLocalControl bool
+	osType := os.Getenv("OS_TYPE")
+
+	if otlpEnabled {
+		if osType == "windows" {
+			meDCRConfigDirectory = "C:\\opt\\genevamonitoringagent\\datadirectory\\mcs\\me\\"
+		} else {
+			meDCRConfigDirectory = "/etc/mdsd.d/config-cache/me"
+		}
+		meLocalControl = false
+	} else {
+		if osType == "windows" {
+			meDCRConfigDirectory = "C:\\opt\\genevamonitoringagent\\datadirectory\\mcs\\metricsextension\\"
+		} else {
+			meDCRConfigDirectory = "/etc/mdsd.d/config-cache/metricsextension"
+		}
+		meLocalControl = true
+	}
 
 	switch {
 	case strings.ToLower(controllerType) == "replicaset":
@@ -44,23 +63,39 @@ func DetermineConfigFiles(controllerType, clusterOverride string) (string, strin
 		} else {
 			meConfigFile = "/usr/sbin/me.config"
 		}
-	case os.Getenv("OS_TYPE") != "windows":
+	case osType != "windows":
 		fluentBitConfigFile = "/opt/fluent-bit/fluent-bit-daemonset.yaml"
 		if clusterOverride == "true" {
-			meConfigFile = "/usr/sbin/me_ds_internal.config"
+			if otlpEnabled {
+				meConfigFile = "/usr/sbin/me_ds_internal_setdim.config"
+			} else {
+				meConfigFile = "/usr/sbin/me_ds_internal.config"
+			}
 		} else {
-			meConfigFile = "/usr/sbin/me_ds.config"
+			if otlpEnabled {
+				meConfigFile = "/usr/sbin/me_ds_setdim.config"
+			} else {
+				meConfigFile = "/usr/sbin/me_ds.config"
+			}
 		}
 	default:
 		fluentBitConfigFile = "/opt/fluent-bit/fluent-bit-windows.conf"
 		if clusterOverride == "true" {
-			meConfigFile = "/opt/metricextension/me_ds_internal_win.config"
+			if otlpEnabled {
+				meConfigFile = "/opt/metricextension/me_ds_internal_setdim_win.config"
+			} else {
+				meConfigFile = "/opt/metricextension/me_ds_internal_win.config"
+			}
 		} else {
-			meConfigFile = "/opt/metricextension/me_ds_win.config"
+			if otlpEnabled {
+				meConfigFile = "/opt/metricextension/me_ds_setdim_win.config"
+			} else {
+				meConfigFile = "/opt/metricextension/me_ds_win.config"
+			}
 		}
 	}
 
-	return meConfigFile, fluentBitConfigFile
+	return meConfigFile, fluentBitConfigFile, meDCRConfigDirectory, meLocalControl
 }
 
 func LogVersionInfo() {
@@ -86,98 +121,6 @@ func LogVersionInfo() {
 		FmtVar("PROMETHEUS_VERSION", prometheusVersion)
 	} else {
 		log.Printf("Error reading Prometheus version file: %v\n", err)
-	}
-}
-
-func StartTelegraf() {
-	fmt.Println("Starting Telegraf")
-
-	if telemetryDisabled := os.Getenv("TELEMETRY_DISABLED"); telemetryDisabled != "true" {
-		if os.Getenv("OS_TYPE") == "linux" {
-			controllerType := os.Getenv("CONTROLLER_TYPE")
-			azmonOperatorEnabled := os.Getenv("AZMON_OPERATOR_ENABLED")
-
-			var telegrafConfig string
-
-			switch {
-			case controllerType == "ReplicaSet" && azmonOperatorEnabled == "true":
-				telegrafConfig = "/opt/telegraf/telegraf-prometheus-collector-ta-enabled.conf"
-			case controllerType == "ReplicaSet":
-				telegrafConfig = "/opt/telegraf/telegraf-prometheus-collector.conf"
-			default:
-				telegrafConfig = "/opt/telegraf/telegraf-prometheus-collector-ds.conf"
-			}
-
-			telegrafCmd := exec.Command("/usr/bin/telegraf", "--config", telegrafConfig)
-			telegrafCmd.Stdout = os.Stdout
-			telegrafCmd.Stderr = os.Stderr
-			if err := telegrafCmd.Start(); err != nil {
-				fmt.Println("Error starting telegraf:", err)
-				return
-			}
-
-			telegrafVersion, _ := os.ReadFile("/opt/telegrafversion.txt")
-			fmt.Printf("TELEGRAF_VERSION=%s\n", string(telegrafVersion))
-		}
-	} else {
-		telegrafPath := "C:\\opt\\telegraf\\telegraf.exe"
-		configPath := "C:\\opt\\telegraf\\telegraf-prometheus-collector-windows.conf"
-
-		// Install Telegraf service
-		installCmd := exec.Command(telegrafPath, "--service", "install", "--config", configPath)
-		if err := installCmd.Run(); err != nil {
-			log.Fatalf("Error installing Telegraf service: %v\n", err)
-		}
-
-		// Set delayed start if POD_NAME is set
-		serverName := os.Getenv("POD_NAME")
-		if serverName != "" {
-			setDelayCmd := exec.Command("sc.exe", fmt.Sprintf("\\\\%s", serverName), "config", "telegraf", "start= delayed-auto")
-			if err := setDelayCmd.Run(); err != nil {
-				log.Printf("Failed to set delayed start for Telegraf: %v\n", err)
-			} else {
-				fmt.Println("Successfully set delayed start for Telegraf")
-			}
-		} else {
-			fmt.Println("Failed to get environment variable POD_NAME to set delayed Telegraf start")
-		}
-
-		// Run Telegraf in test mode
-		testCmd := exec.Command(telegrafPath, "--config", configPath, "--test")
-		testCmd.Stdout = os.Stdout
-		testCmd.Stderr = os.Stderr
-		if err := testCmd.Run(); err != nil {
-			log.Printf("Error running Telegraf in test mode: %v\n", err)
-		}
-
-		// Start Telegraf service
-		startCmd := exec.Command(telegrafPath, "--service", "start")
-		if err := startCmd.Run(); err != nil {
-			log.Printf("Error starting Telegraf service: %v\n", err)
-		}
-
-		// Check if Telegraf is running, retry if necessary
-		for {
-			statusCmd := exec.Command("sc.exe", "query", "telegraf")
-			output, err := statusCmd.CombinedOutput()
-			if err != nil {
-				log.Printf("Error checking Telegraf service status: %v\n", err)
-				time.Sleep(30 * time.Second)
-				continue
-			}
-
-			if string(output) != "" {
-				fmt.Println("Telegraf is running")
-				break
-			}
-
-			fmt.Println("Trying to start Telegraf again in 30 seconds, since it might not have been ready...")
-			time.Sleep(30 * time.Second)
-			startCmd := exec.Command(telegrafPath, "--service", "start")
-			if err := startCmd.Run(); err != nil {
-				log.Printf("Error starting Telegraf service again: %v\n", err)
-			}
-		}
 	}
 }
 
@@ -276,10 +219,163 @@ func GetMcsEndpoints(customEnvironment string) (string, string) {
 	case "ussec":
 		mcsEndpoint = "https://monitor.azure.microsoft.scloud/"
 		mcsGlobalEndpoint = "https://global.handler.control.monitor.azure.microsoft.scloud/"
+	case "azurebleucloud":
+		mcsEndpoint = "https://monitor.sovcloud-api.fr/"
+		mcsGlobalEndpoint = "https://global.handler.control.monitor.sovcloud-api.fr"
 	default:
 		fmt.Printf("Unknown customEnvironment: %s, setting mcs endpoint to default azurepubliccloud values\n", customEnvironment)
 		mcsEndpoint = "https://monitor.azure.com/"
 		mcsGlobalEndpoint = "https://global.handler.control.monitor.azure.com"
 	}
 	return mcsEndpoint, mcsGlobalEndpoint
+}
+
+// Helper function to remove surrounding quotes from a string
+func RemoveQuotes(s string) string {
+	s = strings.TrimSpace(s)
+	if len(s) >= 2 && s[0] == '"' && s[len(s)-1] == '"' {
+		return s[1 : len(s)-1]
+	}
+	return s
+}
+
+// ParseMetricsFiles parses multiple metrics configuration files into a nested map structure.
+func ParseMetricsFiles(filePaths []string) (map[string]map[string]string, error) {
+	metricsConfigBySection := make(map[string]map[string]string)
+
+	for _, filePath := range filePaths {
+		file, err := os.Open(filePath)
+		if err != nil {
+			return nil, fmt.Errorf("failed to open file %s: %w", filePath, err)
+		}
+		defer func() {
+			if cerr := file.Close(); cerr != nil {
+				log.Printf("warning: failed to close file %s: %v", filePath, cerr)
+			}
+		}()
+
+		scanner := bufio.NewScanner(file)
+		var currentSection string
+
+		for scanner.Scan() {
+			line := strings.TrimSpace(scanner.Text())
+
+			// Skip empty lines and comments
+			if line == "" || strings.HasPrefix(line, "#") {
+				continue
+			}
+
+			// Detect section headers (supports top-level keys)
+			if strings.HasSuffix(line, ": |-") {
+				currentSection = strings.TrimSuffix(line, ": |-")
+				if _, exists := metricsConfigBySection[currentSection]; !exists {
+					metricsConfigBySection[currentSection] = make(map[string]string)
+				}
+				continue
+			}
+
+			// Process key-value pairs within sections
+			if strings.Contains(line, "=") {
+				parts := strings.SplitN(line, "=", 2)
+				if len(parts) != 2 {
+					log.Printf("warning: skipping malformed line in file %s: %q", filePath, line)
+					continue
+				}
+
+				key := strings.TrimSpace(parts[0])
+				value := RemoveQuotes(strings.TrimSpace(parts[1]))
+
+				if key == "" {
+					log.Printf("warning: skipping empty key in file %s: %q", filePath, line)
+					continue
+				}
+
+				// Handle top-level keys in a separate section
+				if currentSection == "" {
+					currentSection = "prometheus-collector-settings"
+					if _, exists := metricsConfigBySection[currentSection]; !exists {
+						metricsConfigBySection[currentSection] = make(map[string]string)
+					}
+				}
+
+				metricsConfigBySection[currentSection][key] = value
+			}
+		}
+
+		if err := scanner.Err(); err != nil {
+			return nil, fmt.Errorf("failed to read file %s: %w", filePath, err)
+		}
+	}
+
+	return metricsConfigBySection, nil
+}
+
+// ParseV1Config parses the v1 configuration from individual files into a nested map structure.
+func ParseV1Config(configDir string) (map[string]map[string]string, error) {
+	metricsConfigBySection := make(map[string]map[string]string)
+
+	files, err := os.ReadDir(configDir)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read config directory %s: %w", configDir, err)
+	}
+
+	for _, file := range files {
+		if file.IsDir() || strings.HasPrefix(file.Name(), ".") {
+			continue
+		}
+
+		filePath := filepath.Join(configDir, file.Name())
+
+		// Open the file safely with closure for proper cleanup
+		f, err := os.Open(filePath)
+		if err != nil {
+			log.Printf("error: unable to open file %s: %v", filePath, err)
+			continue
+		}
+		defer func() {
+			if cerr := f.Close(); cerr != nil {
+				log.Printf("warning: failed to close file %s: %v", filePath, cerr)
+			}
+		}()
+
+		sectionData := make(map[string]string)
+		scanner := bufio.NewScanner(f)
+
+		for scanner.Scan() {
+			line := strings.TrimSpace(scanner.Text())
+
+			// Skip empty lines and comments
+			if line == "" || strings.HasPrefix(line, "#") {
+				continue
+			}
+
+			// Process key-value pairs
+			if strings.Contains(line, "=") {
+				parts := strings.SplitN(line, "=", 2)
+				if len(parts) < 2 {
+					log.Printf("warning: skipping malformed line in file %s: %q", filePath, line)
+					continue
+				}
+
+				key := strings.TrimSpace(parts[0])
+				value := RemoveQuotes(strings.TrimSpace(parts[1]))
+
+				if key == "" {
+					log.Printf("warning: skipping empty key in file %s: %q", filePath, line)
+					continue
+				}
+
+				sectionData[key] = value
+			}
+		}
+
+		if err := scanner.Err(); err != nil {
+			log.Printf("error: failed to read file %s: %v", filePath, err)
+			continue
+		}
+
+		metricsConfigBySection[file.Name()] = sectionData
+	}
+
+	return metricsConfigBySection, nil
 }
