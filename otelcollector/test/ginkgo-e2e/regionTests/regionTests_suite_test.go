@@ -1,9 +1,12 @@
 package regionTests
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
+	"io/ioutil"
 	"log"
 	"net/http"
 	"os"
@@ -94,26 +97,85 @@ func getKubeClient() (*kubernetes.Clientset, *rest.Config, error) {
 // 	return accessToken.Token, nil
 // }
 
-func getManagedIdentityToken() (string, error) {
-	// Replace with your user-assigned managed identity client ID
-	clientID := "de61beff-a8f7-4016-810d-2a744c5fe868"
+// func getManagedIdentityToken() (string, error) {
+// 	// Replace with your user-assigned managed identity client ID
+// 	clientID := "de61beff-a8f7-4016-810d-2a744c5fe868"
 
-	// Create a ManagedIdentityCredential using the client ID
-	cred, err := azidentity.NewManagedIdentityCredential(&azidentity.ManagedIdentityCredentialOptions{
-		ID: azidentity.ClientID(clientID),
-	})
-	if err != nil {
-		return "", fmt.Errorf("failed to create managed identity credential: %s", err.Error())
+// 	// Create a ManagedIdentityCredential using the client ID
+// 	cred, err := azidentity.NewManagedIdentityCredential(&azidentity.ManagedIdentityCredentialOptions{
+// 		ID: azidentity.ClientID(clientID),
+// 	})
+// 	if err != nil {
+// 		return "", fmt.Errorf("failed to create managed identity credential: %s", err.Error())
+// 	}
+
+// 	// Request a token for Prometheus Monitor scope
+// 	opts := policy.TokenRequestOptions{
+// 		Scopes: []string{"https://prometheus.monitor.azure.com/.default"},
+// 	}
+
+// 	accessToken, err := cred.GetToken(context.Background(), opts)
+// 	if err != nil {
+// 		return "", fmt.Errorf("failed to get access token: %s", err.Error())
+// 	}
+
+// 	return accessToken.Token, nil
+// }
+
+func getQueryAccessToken() (string, error) {
+	identityEndpoint := os.Getenv("IDENTITY_ENDPOINT")
+	identityHeader := os.Getenv("IDENTITY_HEADER")
+	resource := "https://prometheus.monitor.azure.com"
+
+	fmt.Println("Are auto-injected identity variables present?")
+	// If Azure-injected identity variables are present, use them
+	if identityEndpoint != "" && identityHeader != "" {
+		body := []byte(fmt.Sprintf("resource=%s", resource))
+		req, err := http.NewRequest("GET", identityEndpoint, bytes.NewBuffer(body))
+		if err != nil {
+			return "", fmt.Errorf("failed to create request to IDENTITY_ENDPOINT: %w", err)
+		}
+
+		req.Header.Add("secret", identityHeader)
+		req.Header.Add("Content-Type", "application/x-www-form-urlencoded")
+
+		client := &http.Client{}
+		resp, err := client.Do(req)
+		if err != nil {
+			return "", fmt.Errorf("failed to call IDENTITY_ENDPOINT: %w", err)
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			respBody, _ := ioutil.ReadAll(resp.Body)
+			return "", fmt.Errorf("failed to get token from IDENTITY_ENDPOINT: %s", string(respBody))
+		}
+
+		var tokenResp struct {
+			AccessToken string `json:"access_token"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&tokenResp); err != nil {
+			return "", fmt.Errorf("failed to decode token response: %w", err)
+		}
+
+		return tokenResp.AccessToken, nil
 	}
 
-	// Request a token for Prometheus Monitor scope
+	fmt.Println("IDENTITY_ENDPOINT or IDENTITY_HEADER not set, falling back to ManagedIdentityCredential")
+
+	// Fallback to ManagedIdentityCredential (for local dev or AKS)
+	cred, err := azidentity.NewManagedIdentityCredential(nil)
+	if err != nil {
+		return "", fmt.Errorf("failed to create managed identity credential: %w", err)
+	}
+
 	opts := policy.TokenRequestOptions{
 		Scopes: []string{"https://prometheus.monitor.azure.com/.default"},
 	}
 
 	accessToken, err := cred.GetToken(context.Background(), opts)
 	if err != nil {
-		return "", fmt.Errorf("failed to get access token: %s", err.Error())
+		return "", fmt.Errorf("failed to get access token from managed identity: %w", err)
 	}
 
 	return accessToken.Token, nil
@@ -136,7 +198,7 @@ func (t *transport) RoundTrip(req *http.Request) (*http.Response, error) {
 }
 
 func createPromApiManagedClient(amwQueryEndpoint string) (v1.API, error) {
-	token, err := getManagedIdentityToken()
+	token, err := getQueryAccessToken()
 	if err != nil {
 		return nil, fmt.Errorf("Failed to get managed identity access token: %s", err.Error())
 	}
