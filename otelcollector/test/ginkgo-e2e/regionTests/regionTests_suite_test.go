@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,11 +13,13 @@ import (
 
 	"prometheus-collector/otelcollector/test/utils"
 
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore/policy"
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/to"
 	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
 	"github.com/Azure/azure-sdk-for-go/sdk/monitor/azquery"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"github.com/prometheus/client_golang/api"
 	v1 "github.com/prometheus/client_golang/api/prometheus/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
@@ -71,6 +74,84 @@ func getKubeClient() (*kubernetes.Clientset, *rest.Config, error) {
 	}
 
 	return client, cfg, nil
+}
+
+// func GetQueryAccessToken() (string, error) {
+// 	cred, err := azidentity.NewDefaultAzureCredential(nil)
+// 	if err != nil {
+// 		return "", fmt.Errorf("Failed to create identity credential: %s", err.Error())
+// 	}
+
+// 	opts := policy.TokenRequestOptions{
+// 		Scopes: []string{"https://prometheus.monitor.azure.com"},
+// 	}
+
+// 	accessToken, err := cred.GetToken(context.Background(), opts)
+// 	if err != nil {
+// 		return "", fmt.Errorf("failed to get accesstoken: %s", err.Error())
+// 	}
+
+// 	return accessToken.Token, nil
+// }
+
+func getManagedIdentityToken() (string, error) {
+	// Replace with your user-assigned managed identity client ID
+	clientID := "de61beff-a8f7-4016-810d-2a744c5fe868"
+
+	// Create a ManagedIdentityCredential using the client ID
+	cred, err := azidentity.NewManagedIdentityCredential(&azidentity.ManagedIdentityCredentialOptions{
+		ID: azidentity.ClientID(clientID),
+	})
+	if err != nil {
+		return "", fmt.Errorf("failed to create managed identity credential: %s", err.Error())
+	}
+
+	// Request a token for Prometheus Monitor scope
+	opts := policy.TokenRequestOptions{
+		Scopes: []string{"https://prometheus.monitor.azure.com/.default"},
+	}
+
+	accessToken, err := cred.GetToken(context.Background(), opts)
+	if err != nil {
+		return "", fmt.Errorf("failed to get access token: %s", err.Error())
+	}
+
+	return accessToken.Token, nil
+}
+
+/*
+ * The custom Prometheus API transport with the bearer token.
+ */
+type transport struct {
+	underlyingTransport http.RoundTripper
+	apiToken            string
+}
+
+/*
+ * The custom RoundTrip with the bearer token added to the request header.
+ */
+func (t *transport) RoundTrip(req *http.Request) (*http.Response, error) {
+	req.Header.Add("Authorization", fmt.Sprintf("Bearer %s", t.apiToken))
+	return t.underlyingTransport.RoundTrip(req)
+}
+
+func createPromApiManagedClient(amwQueryEndpoint string) (v1.API, error) {
+	token, err := getManagedIdentityToken()
+	if err != nil {
+		return nil, fmt.Errorf("Failed to get managed identity access token: %s", err.Error())
+	}
+	if token == "" {
+		return nil, fmt.Errorf("Failed to get query managed identity access token: token is empty")
+	}
+	config := api.Config{
+		Address:      amwQueryEndpoint,
+		RoundTripper: &transport{underlyingTransport: http.DefaultTransport, apiToken: token},
+	}
+	prometheusAPIClient, err := api.NewClient(config)
+	if err != nil {
+		return nil, fmt.Errorf("Failed to create Prometheus API client: %s", err.Error())
+	}
+	return v1.NewAPI(prometheusAPIClient), nil
 }
 
 var _ = BeforeSuite(func() {
