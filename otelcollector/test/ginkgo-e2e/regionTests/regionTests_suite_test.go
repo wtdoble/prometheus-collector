@@ -156,6 +156,7 @@ func createPromApiManagedClient(amwQueryEndpoint string) (v1.API, error) {
 
 var _ = BeforeSuite(func() {
 	var err error
+	fmt.Println("Getting kube client")
 	K8sClient, Cfg, err = getKubeClient() ////****** NEW - WTD ************** utils.SetupKubernetesClient()
 	Expect(err).NotTo(HaveOccurred())
 
@@ -163,7 +164,9 @@ var _ = BeforeSuite(func() {
 	fmt.Printf("env (AMW_QUERY_ENDPOINT): %s\r\n", amwQueryEndpoint)
 	Expect(amwQueryEndpoint).NotTo(BeEmpty())
 
-	PrometheusQueryClient, err = utils.CreatePrometheusAPIClient(amwQueryEndpoint)
+	////PrometheusQueryClient, err = utils.CreatePrometheusAPIClient(amwQueryEndpoint)
+	fmt.Println("Getting prom api client")
+	PrometheusQueryClient, err = createPromApiManagedClient(amwQueryEndpoint)
 	Expect(err).NotTo(HaveOccurred())
 	Expect(PrometheusQueryClient).NotTo(BeNil())
 
