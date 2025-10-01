@@ -1,7 +1,6 @@
 package regionTests
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"flag"
@@ -9,6 +8,7 @@ import (
 	"io/ioutil"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -126,12 +126,22 @@ func getQueryAccessToken() (string, error) {
 	identityEndpoint := os.Getenv("IDENTITY_ENDPOINT")
 	identityHeader := os.Getenv("IDENTITY_HEADER")
 	resource := "https://prometheus.monitor.azure.com"
+	principalId := "529f7b78-240a-4dd1-baf5-f3e500d8e2fb"
 
 	fmt.Println("Are auto-injected identity variables present?")
 	// If Azure-injected identity variables are present, use them
 	if identityEndpoint != "" && identityHeader != "" {
-		body := []byte(fmt.Sprintf("resource=%s", resource))
-		req, err := http.NewRequest("GET", identityEndpoint, bytes.NewBuffer(body))
+		log.Printf("Using injected identity endpoint: %s", identityEndpoint)
+		log.Printf("Using injected identity header: %s", identityHeader)
+
+		data := url.Values{}
+		data.Set("resource", resource)
+		data.Set("principalId", principalId)
+
+		reqBody := data.Encode()
+		log.Printf("Request body: %s", reqBody)
+
+		req, err := http.NewRequest("POST", identityEndpoint, strings.NewReader(reqBody))
 		if err != nil {
 			return "", fmt.Errorf("failed to create request to IDENTITY_ENDPOINT: %w", err)
 		}
@@ -146,38 +156,46 @@ func getQueryAccessToken() (string, error) {
 		}
 		defer resp.Body.Close()
 
+		log.Printf("Response status: %s", resp.Status)
+		respBody, _ := ioutil.ReadAll(resp.Body)
+		log.Printf("Response body: %s", string(respBody))
+
 		if resp.StatusCode != http.StatusOK {
-			respBody, _ := ioutil.ReadAll(resp.Body)
 			return "", fmt.Errorf("failed to get token from IDENTITY_ENDPOINT: %s", string(respBody))
 		}
 
 		var tokenResp struct {
 			AccessToken string `json:"access_token"`
 		}
-		if err := json.NewDecoder(resp.Body).Decode(&tokenResp); err != nil {
+		if err := json.Unmarshal(respBody, &tokenResp); err != nil {
 			return "", fmt.Errorf("failed to decode token response: %w", err)
 		}
 
+		log.Printf("Access token acquired successfully.")
 		return tokenResp.AccessToken, nil
 	}
 
-	fmt.Println("IDENTITY_ENDPOINT or IDENTITY_HEADER not set, falling back to ManagedIdentityCredential")
+	fmt.Println("IDENTITY_ENDPOINT or IDENTITY_HEADER not set, falling back to DefaultAzureCredential")
+	//log.Println("IDENTITY_ENDPOINT or IDENTITY_HEADER not set. Falling back to DefaultAzureCredential.")
+	return getFallbackAccessToken(resource)
+}
 
-	// Fallback to ManagedIdentityCredential (for local dev or AKS)
-	cred, err := azidentity.NewManagedIdentityCredential(nil)
+func getFallbackAccessToken(resource string) (string, error) {
+	cred, err := azidentity.NewDefaultAzureCredential(nil)
 	if err != nil {
-		return "", fmt.Errorf("failed to create managed identity credential: %w", err)
+		return "", fmt.Errorf("DefaultAzureCredential creation failed: %w", err)
 	}
 
 	opts := policy.TokenRequestOptions{
-		Scopes: []string{"https://prometheus.monitor.azure.com/.default"},
+		Scopes: []string{resource},
 	}
 
 	accessToken, err := cred.GetToken(context.Background(), opts)
 	if err != nil {
-		return "", fmt.Errorf("failed to get access token from managed identity: %w", err)
+		return "", fmt.Errorf("DefaultAzureCredential failed to get token: %w", err)
 	}
 
+	log.Printf("Fallback access token acquired successfully.")
 	return accessToken.Token, nil
 }
 
