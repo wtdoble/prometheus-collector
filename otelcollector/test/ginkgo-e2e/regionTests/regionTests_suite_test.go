@@ -134,16 +134,15 @@ func getQueryAccessToken() (string, error) {
 		log.Printf("Using injected identity endpoint: %s", identityEndpoint)
 		log.Printf("Using injected identity header: %s", identityHeader)
 
-		data := url.Values{}
-		data.Set("resource", resource)
-		data.Set("principalId", principalId)
+		// Construct query string
+		query := fmt.Sprintf("resource=%s&principalId=%s", url.QueryEscape(resource), url.QueryEscape(principalId))
+		fullURL := fmt.Sprintf("%s&%s", identityEndpoint, query)
 
-		reqBody := data.Encode()
-		log.Printf("Request body: %s", reqBody)
+		log.Printf("Full GET URL: %s", fullURL)
 
-		req, err := http.NewRequest("POST", identityEndpoint, strings.NewReader(reqBody))
+		req, err := http.NewRequest("GET", fullURL, nil)
 		if err != nil {
-			return "", fmt.Errorf("failed to create request to IDENTITY_ENDPOINT: %w", err)
+			return "", fmt.Errorf("failed to create GET request to IDENTITY_ENDPOINT: %w", err)
 		}
 
 		req.Header.Add("secret", identityHeader)
