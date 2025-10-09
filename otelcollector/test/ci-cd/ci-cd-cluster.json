@@ -2,6 +2,55 @@
   "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
   "contentVersion": "1.0.0.0",
   "parameters": {
+    "allowedRegions": {
+      "type": "array",
+      "defaultValue": [
+        "eastus",
+        "australiacentral",
+        "australiacentral2",
+        "australiaeast",
+        "australiasoutheast",
+        "brazilsouth",
+        "canadacentral",
+        "canadaeast",
+        "centralindia",
+        "centralus",
+        "eastasia",
+        "eastus2",
+        "francecentral",
+        "germanywestcentral",
+        "israelcentral",
+        "italynorth",
+        "japaneast",
+        "japanwest",
+        "koreacentral",
+        "koreasouth",
+        "mexicocentral",
+        "northeurope",
+        "norwayeast",
+        "southafricanorth",
+        "southcentralus",
+        "southeastasia",
+        "southindia",
+        "spaincentral",
+        "swedencentral",
+        "switzerlandnorth",
+        "taiwannorth",
+        "taiwannorthwest",
+        "uaenorth",
+        "uaecentral",
+        "uksouth",
+        "ukwest",
+        "westcentralus",
+        "westeurope",
+        "westus",
+        "westus2",
+        "westus3"
+      ],
+      "metadata": {
+        "description": "The list of valid regions for deployment"
+      }
+    }, 
     "azureMonitorWorkspaceLocation": {
       "type": "string",
       "defaultValue": "westus2",
@@ -59,14 +108,14 @@
     },
     "clusterName": {
       "type": "string",
-      "defaultValue": "aksDemoCluster",
+      "defaultValue": "wtdDemoCluster",
       "metadata": {
         "description": "The name of the Managed Cluster resource."
       }
     },
     "clusterLocation": {
       "defaultValue": "westus2",
-      "type": "String",
+      "type": "string",
       "allowedValues": [
             "australiacentral",
             "australiacentral2",
@@ -198,9 +247,51 @@
       "metadata": {
         "description": ""
       }
+    },
+    "ipAddrNatGateway": {
+      "type": "string",
+      "defaultValue": "ipAddrNatGateway",
+      "metadata": {
+        "description": "public IP address associated with the NAT Gateway"
+      }
+    },
+    "shellExtSubnetName": {
+      "type": "string",
+      "defaultValue": "shellSubnet",
+      "metadata": {
+        "description": "subnet for the shell extension"
+      }
+    },
+    "storageAccountName": {
+      "type": "string",
+      "defaultValue": "[toLower(concat('stshellextlogs', '12345'))]",
+      "metadata": {
+        "description": "Storage account for archiving shell extension logs"
+      }
+    },
+    "skuName": {
+      "type": "string",
+      "defaultValue": "Standard_LRS",
+      "allowedValues": [
+        "Standard_LRS",
+        "Standard_GRS",
+        "Standard_ZRS",
+        "Premium_LRS"
+      ]
+    },
+    "kind": {
+      "type": "string",
+      "defaultValue": "StorageV2",
+      "allowedValues": [
+        "Storage",
+        "StorageV2",
+        "BlobStorage"
+      ]
     }
   },
   "variables": {
+    "isValidClusterLocation": "[contains(parameters('allowedRegions'), parameters('clusterLocation'))]",
+    "isValidAmwLocation": "[contains(parameters('allowedRegions'), parameters('azureMonitorWorkspaceLocation'))]",
     "resourceIdPrefix": "[resourceGroup().id]",
     "azureMonitorWorkspaceName": "[concat(parameters('clusterName'), '-', 'amw')]",
     "dceName": "[Concat('MSProm', '-', parameters('azureMonitorWorkspaceLocation'), '-', parameters('clusterName'))]",
@@ -219,9 +310,11 @@
     "RecordingRuleGroupDescriptionWin": "Kubernetes Recording Rules RuleGroup for Win",
     "version": " - 0.1"
   },
+  "functions": [],
   "resources": [
     {
       "type": "Microsoft.Network/virtualNetworks",
+      "condition": "[variables('isValidClusterLocation')]",
       "apiVersion": "2022-07-01",
       "name": "[parameters('vnetName')]",
       "location": "[parameters('clusterLocation')]",
@@ -247,7 +340,7 @@
             }
           },
           {
-            "name": "shellSubnet",
+            "name": "[parameters('shellExtSubnetName')]",
             "properties": {
               "addressPrefix": "10.0.1.0/24",
               "delegations": [
@@ -263,9 +356,70 @@
         ]
       }
     },
+    {
+      "type": "Microsoft.Network/publicIPAddresses",
+      "condition": "[variables('isValidClusterLocation')]",
+      "apiVersion": "2023-09-01",
+      "name": "[parameters('ipAddrNatGateway')]",
+      "sku": {
+          "name": "Standard",
+          "tier": "Regional"
+      },
+      "location": "[parameters('clusterLocation')]",
+      "properties": {
+          "publicIPAddressVersion": "IPv4",
+          "publicIPAllocationMethod": "Static",
+          "idleTimeoutInMinutes": 4
+      }
+    },
+    {
+      "type": "Microsoft.Network/natGateways",
+      "condition": "[variables('isValidClusterLocation')]",
+      "apiVersion": "2024-07-01",
+      "name": "shellExtNatGateway",
+      "dependsOn": [
+          "[resourceId('Microsoft.Network/publicIPAddresses', parameters('ipAddrNatGateway'))]",
+          "[resourceId('Microsoft.Network/virtualNetworks', parameters('vnetName'))]"
+      ],
+      "sku": {
+          "name": "Standard"
+      },
+      "location": "[parameters('clusterLocation')]",
+      "properties": {
+          "idleTimeoutInMinutes": 4,
+          "scope": "Public",
+          "publicIpAddresses": [
+              {
+                  "id": "[resourceId('Microsoft.Network/publicIPAddresses', parameters('ipAddrNatGateway'))]"
+              }
+          ],
+          "subnets": [
+              {
+                  "id": "[resourceId('Microsoft.Network/virtualNetworks/subnets', parameters('vnetName'), parameters('shellExtSubnetName'))]"
+              }
+          ]
+      }
+    },
 
+
+  {
+    "type": "Microsoft.Storage/storageAccounts",
+    "condition": "[variables('isValidClusterLocation')]",
+    "apiVersion": "2023-01-01",
+    "name": "[parameters('storageAccountName')]",
+    "location": "[parameters('clusterLocation')]",
+    "sku": {
+      "name": "[parameters('skuName')]"
+    },
+    "kind": "[parameters('kind')]",
+    "properties": {}
+  },
+
+
+    
     {
       "type": "microsoft.monitor/accounts",
+      "condition": "[variables('isValidAmwLocation')]",
       "apiVersion": "2021-06-03-preview",
       "name": "[variables('azureMonitorWorkspaceName')]",
       "location": "[parameters('azureMonitorWorkspaceLocation')]",
@@ -274,7 +428,8 @@
     },
     {
       "type": "Microsoft.ContainerService/managedClusters",
-      "apiVersion": "2025-02-01",
+      "condition": "[variables('isValidClusterLocation')]",
+      "apiVersion": "2025-07-01",
       "name": "[parameters('clusterName')]",
       "location": "[parameters('clusterLocation')]",
       "identity": {
@@ -304,9 +459,6 @@
           "dnsServiceIP": "10.0.2.10",
           "outboundType": "loadBalancer",
           "podCidr": ""
-          //"serviceCidr": "10.0.0.0/16",
-          //"dnsServiceIP": "10.0.0.10",
-          //"outboundType": "loadBalancer"
         },
         "agentPoolProfiles": [
           {
@@ -323,7 +475,7 @@
               "mode": "System",
               "osType": "Linux",
               "osSKU": "Ubuntu",
-              "enableFIPS": false
+              "enableFIPS": false              
           },
           {
               "name": "agentpool1",
@@ -423,6 +575,10 @@
               "enableFIPS": false
           }
         ],
+        "autoUpgradeProfile": {
+          //"upgradeChannel": "patch",
+          "nodeOSUpgradeChannel": "NodeImage"
+        },
         "azureMonitorProfile": {
           "metrics": {
             "enabled": true,
@@ -436,6 +592,7 @@
     },
     {
       "type": "Microsoft.Insights/dataCollectionEndpoints",
+      "condition": "[variables('isValidAmwLocation')]",      
       "apiVersion": "2022-06-01",
       "name": "[variables('dceName')]",
       "location": "[parameters('azureMonitorWorkspaceLocation')]",
@@ -444,6 +601,7 @@
     },
     {
       "type": "Microsoft.Insights/dataCollectionRules",
+      "condition": "[variables('isValidAmwLocation')]",      
       "apiVersion": "2022-06-01",
       "name": "[variables('dcrName')]",
       "location": "[parameters('azureMonitorWorkspaceLocation')]",
@@ -506,6 +664,7 @@
           "resources": [
             {
               "type": "Microsoft.ContainerService/managedClusters/providers/dataCollectionRuleAssociations",
+              "condition": "[variables('isValidClusterLocation')]",
               "name": "[concat(parameters('clusterName'),'/microsoft.insights/', variables('dcraName'))]",
               "apiVersion": "2022-06-01",
               "location": "[parameters('clusterLocation')]",
@@ -520,10 +679,10 @@
       }
     },
 
-
     {
       "name": "[variables('nodeRecordingRuleGroupName')]",
       "type": "Microsoft.AlertsManagement/prometheusRuleGroups",
+      "condition": "[variables('isValidAmwLocation')]",      
       "apiVersion": "2023-03-01",    
       "dependsOn": [
         "[resourceId('microsoft.monitor/accounts/', variables('azureMonitorWorkspaceName'))]",
@@ -589,6 +748,7 @@
     {
       "name": "[variables('kubernetesRecordingRuleGroupName')]",
       "type": "Microsoft.AlertsManagement/prometheusRuleGroups",
+      "condition": "[variables('isValidAmwLocation')]",      
       "apiVersion": "2023-03-01",
       "dependsOn": [
         "[resourceId('microsoft.monitor/accounts/', variables('azureMonitorWorkspaceName'))]",
@@ -698,6 +858,7 @@
     {
       "name": "[variables('nodeRecordingRuleGroupNameWin')]",
       "type": "Microsoft.AlertsManagement/prometheusRuleGroups",
+      "condition": "[variables('isValidAmwLocation')]",
       "apiVersion": "2023-03-01",
       "dependsOn": [
         "[resourceId('microsoft.monitor/accounts/', variables('azureMonitorWorkspaceName'))]",
@@ -780,6 +941,7 @@
     {
       "name": "[variables('nodeAndKubernetesRecordingRuleGroupNameWin')]",
       "type": "Microsoft.AlertsManagement/prometheusRuleGroups",
+      "condition": "[variables('isValidAmwLocation')]",      
       "apiVersion": "2023-03-01",
       "dependsOn": [
         "[resourceId('microsoft.monitor/accounts/', variables('azureMonitorWorkspaceName'))]",
@@ -868,10 +1030,10 @@
       }
     },
 
-
     {
       "name": "[Concat(parameters('clusterName'), '-dev-alerts')]",
       "type": "Microsoft.AlertsManagement/prometheusRuleGroups",
+      "condition": "[variables('isValidAmwLocation')]",
       "apiVersion": "2023-03-01",
       "location": "[parameters('azureMonitorWorkspaceLocation')]",
       "dependsOn": [
@@ -1125,5 +1287,14 @@
       }
     }
   ],
-  "outputs": {}
+  "outputs": {
+    "amwWorkspaceLocationValidationResult": {
+      "type": "string",
+      "value": "[if(variables('isValidAmwLocation'), concat('AMW location ', parameters('azureMonitorWorkspaceLocation'), ' is valid.'), concat('Invalid AMW location: ', parameters('azureMonitorWorkspaceLocation')))]"
+    },
+    "clusterLocationValidationResult": {
+      "type": "string",
+      "value": "[if(variables('isValidClusterLocation'), concat('Cluster location ', parameters('clusterLocation'), ' is valid.'), concat('Invalid cluster location: ', parameters('clusterLocation')))]"
+    }
+  }
 }
