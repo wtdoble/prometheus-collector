@@ -2,13 +2,10 @@ package regionTests
 
 import (
 	"context"
-	"encoding/json"
 	"flag"
 	"fmt"
-	"io/ioutil"
 	"log"
 	"net/http"
-	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -16,6 +13,8 @@ import (
 
 	"prometheus-collector/otelcollector/test/utils"
 
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore/cloud"
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/policy"
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/to"
 	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
@@ -24,6 +23,7 @@ import (
 	. "github.com/onsi/gomega"
 	"github.com/prometheus/client_golang/api"
 	v1 "github.com/prometheus/client_golang/api/prometheus/v1"
+	"github.com/prometheus/common/model"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd" //*************NEW - WTD***************************
@@ -79,6 +79,102 @@ func getKubeClient() (*kubernetes.Clientset, *rest.Config, error) {
 	return client, cfg, nil
 }
 
+var envConfig = cloud.Configuration{
+
+	ActiveDirectoryAuthorityHost: "https://login.microsoftonline.eaglex.ic.gov/",
+	Services: map[cloud.ServiceName]cloud.ServiceConfiguration{
+		cloud.ResourceManager: {
+			Endpoint: "https://management.azure.eaglex.ic.gov/",
+			Audience: "https://management.azure.eaglex.ic.gov/.default",
+		},
+		// // cloud.Storage: {
+		// // 	// If using storage data-plane clients; adjust endpoint and audience if required.
+		// // 	// Endpoint is often per-account, so set in the service client instead.
+		// // 	Audience: "https://storage.azure.eaglex.ic.gov/.default",
+		// // },
+		// // cloud.KeyVault: {
+		// // 	Endpoint: "https://vault.azure.eaglex.ic.gov",
+		// // 	Audience: "https://vault.azure.eaglex.ic.gov/.default",
+		// // },
+		// add more services as needed
+	},
+}
+
+func createDefaultAzureCredential(options *azidentity.DefaultAzureCredentialOptions) (*azidentity.DefaultAzureCredential, error) {
+
+	if options == nil {
+		options = &azidentity.DefaultAzureCredentialOptions{}
+	}
+
+	custom := envConfig
+
+	options.Cloud = custom
+	cred, err := azidentity.NewDefaultAzureCredential(options)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create default azure credential: %w", err)
+	}
+	return cred, nil
+}
+
+// //////////////////////////////////////////////////
+func getQueryAccessToken() (string, error) {
+	cred, err := createDefaultAzureCredential(nil) //(nil)
+	if err != nil {
+		return "", fmt.Errorf("Failed to create identity credential: %s", err.Error())
+	}
+
+	opts := policy.TokenRequestOptions{
+		Scopes: []string{"https://prometheus.monitor.azure.eaglex.ic.gov/.default"},
+	}
+
+	accessToken, err := cred.GetToken(context.Background(), opts)
+	if err != nil {
+		return "", fmt.Errorf("failed to get accesstoken: %s", err.Error())
+	}
+
+	return accessToken.Token, nil
+}
+
+/*
+ * The custom Prometheus API transport with the bearer token.
+ */
+type transport struct {
+	underlyingTransport http.RoundTripper
+	apiToken            string
+}
+
+/*
+ * The custom RoundTrip with the bearer token added to the request header.
+ */
+func (t *transport) RoundTrip(req *http.Request) (*http.Response, error) {
+	req.Header.Add("Authorization", fmt.Sprintf("Bearer %s", t.apiToken))
+	return t.underlyingTransport.RoundTrip(req)
+}
+
+/*
+ * Create a Prometheus API client to use with the Managed Prometheus AMW Query API.
+ */
+func createPromApiManagedClient(amwQueryEndpoint string) (v1.API, error) {
+	token, err := getQueryAccessToken()
+	if err != nil {
+		return nil, fmt.Errorf("Failed to get query access token: %s", err.Error())
+	}
+	if token == "" {
+		return nil, fmt.Errorf("Failed to get query access token: token is empty")
+	}
+	config := api.Config{
+		Address:      amwQueryEndpoint,
+		RoundTripper: &transport{underlyingTransport: http.DefaultTransport, apiToken: token},
+	}
+	prometheusAPIClient, err := api.NewClient(config)
+	if err != nil {
+		return nil, fmt.Errorf("Failed to create Prometheus API client: %s", err.Error())
+	}
+	return v1.NewAPI(prometheusAPIClient), nil
+}
+
+////////////////////////////////
+
 // func GetQueryAccessToken() (string, error) {
 // 	cred, err := azidentity.NewDefaultAzureCredential(nil)
 // 	if err != nil {
@@ -121,117 +217,123 @@ func getKubeClient() (*kubernetes.Clientset, *rest.Config, error) {
 
 // 	return accessToken.Token, nil
 // }
+////////////////////////////////////////////////////////////////
+// // func getQueryAccessToken() (string, error) {
+// // 	identityEndpoint := os.Getenv("IDENTITY_ENDPOINT")
+// // 	identityHeader := os.Getenv("IDENTITY_HEADER")
+// // 	resource := "https://prometheus.monitor.azure.com"
+// // 	principalId := "529f7b78-240a-4dd1-baf5-f3e500d8e2fb"
 
-func getQueryAccessToken() (string, error) {
-	identityEndpoint := os.Getenv("IDENTITY_ENDPOINT")
-	identityHeader := os.Getenv("IDENTITY_HEADER")
-	resource := "https://prometheus.monitor.azure.com"
-	principalId := "529f7b78-240a-4dd1-baf5-f3e500d8e2fb"
+// // 	fmt.Println("Are auto-injected identity variables present?")
+// // 	// If Azure-injected identity variables are present, use them
+// // 	if identityEndpoint != "" && identityHeader != "" {
+// // 		log.Printf("Using injected identity endpoint: %s", identityEndpoint)
+// // 		log.Printf("Using injected identity header: %s", identityHeader)
 
-	fmt.Println("Are auto-injected identity variables present?")
-	// If Azure-injected identity variables are present, use them
-	if identityEndpoint != "" && identityHeader != "" {
-		log.Printf("Using injected identity endpoint: %s", identityEndpoint)
-		log.Printf("Using injected identity header: %s", identityHeader)
+// // 		// Construct query string
+// // 		query := fmt.Sprintf("resource=%s&principalId=%s", url.QueryEscape(resource), url.QueryEscape(principalId))
+// // 		fullURL := fmt.Sprintf("%s&%s", identityEndpoint, query)
 
-		// Construct query string
-		query := fmt.Sprintf("resource=%s&principalId=%s", url.QueryEscape(resource), url.QueryEscape(principalId))
-		fullURL := fmt.Sprintf("%s&%s", identityEndpoint, query)
+// // 		log.Printf("Full GET URL: %s", fullURL)
 
-		log.Printf("Full GET URL: %s", fullURL)
+// // 		req, err := http.NewRequest("GET", fullURL, nil)
+// // 		if err != nil {
+// // 			return "", fmt.Errorf("failed to create GET request to IDENTITY_ENDPOINT: %w", err)
+// // 		}
 
-		req, err := http.NewRequest("GET", fullURL, nil)
-		if err != nil {
-			return "", fmt.Errorf("failed to create GET request to IDENTITY_ENDPOINT: %w", err)
-		}
+// // 		req.Header.Add("secret", identityHeader)
+// // 		req.Header.Add("Content-Type", "application/x-www-form-urlencoded")
 
-		req.Header.Add("secret", identityHeader)
-		req.Header.Add("Content-Type", "application/x-www-form-urlencoded")
+// // 		client := &http.Client{}
+// // 		resp, err := client.Do(req)
+// // 		if err != nil {
+// // 			return "", fmt.Errorf("failed to call IDENTITY_ENDPOINT: %w", err)
+// // 		}
+// // 		defer resp.Body.Close()
 
-		client := &http.Client{}
-		resp, err := client.Do(req)
-		if err != nil {
-			return "", fmt.Errorf("failed to call IDENTITY_ENDPOINT: %w", err)
-		}
-		defer resp.Body.Close()
+// // 		log.Printf("Response status: %s", resp.Status)
+// // 		respBody, _ := ioutil.ReadAll(resp.Body)
+// // 		log.Printf("Response body: %s", string(respBody))
 
-		log.Printf("Response status: %s", resp.Status)
-		respBody, _ := ioutil.ReadAll(resp.Body)
-		log.Printf("Response body: %s", string(respBody))
+// // 		if resp.StatusCode != http.StatusOK {
+// // 			return "", fmt.Errorf("failed to get token from IDENTITY_ENDPOINT: %s", string(respBody))
+// // 		}
 
-		if resp.StatusCode != http.StatusOK {
-			return "", fmt.Errorf("failed to get token from IDENTITY_ENDPOINT: %s", string(respBody))
-		}
+// // 		var tokenResp struct {
+// // 			AccessToken string `json:"access_token"`
+// // 		}
+// // 		if err := json.Unmarshal(respBody, &tokenResp); err != nil {
+// // 			return "", fmt.Errorf("failed to decode token response: %w", err)
+// // 		}
 
-		var tokenResp struct {
-			AccessToken string `json:"access_token"`
-		}
-		if err := json.Unmarshal(respBody, &tokenResp); err != nil {
-			return "", fmt.Errorf("failed to decode token response: %w", err)
-		}
+// // 		log.Printf("Access token acquired successfully.")
+// // 		return tokenResp.AccessToken, nil
+// // 	}
 
-		log.Printf("Access token acquired successfully.")
-		return tokenResp.AccessToken, nil
-	}
+// // 	fmt.Println("IDENTITY_ENDPOINT or IDENTITY_HEADER not set, falling back to DefaultAzureCredential")
+// // 	//log.Println("IDENTITY_ENDPOINT or IDENTITY_HEADER not set. Falling back to DefaultAzureCredential.")
+// // 	return getFallbackAccessToken(resource)
+// // }
 
-	fmt.Println("IDENTITY_ENDPOINT or IDENTITY_HEADER not set, falling back to DefaultAzureCredential")
-	//log.Println("IDENTITY_ENDPOINT or IDENTITY_HEADER not set. Falling back to DefaultAzureCredential.")
-	return getFallbackAccessToken(resource)
-}
+// // func getFallbackAccessToken(resource string) (string, error) {
+// // 	c := azcore.ClientOptions{
+// // 		Cloud: cloud.AzurePublic,
+// // 	}
+// // 	d := &azidentity.DefaultAzureCredentialOptions{
+// // 		ClientOptions: c,
+// // 	}
+// // 	cred, err := azidentity.NewDefaultAzureCredential(d)
+// // 	if err != nil {
+// // 		return "", fmt.Errorf("DefaultAzureCredential creation failed: %w", err)
+// // 	}
 
-func getFallbackAccessToken(resource string) (string, error) {
-	cred, err := azidentity.NewDefaultAzureCredential(nil)
-	if err != nil {
-		return "", fmt.Errorf("DefaultAzureCredential creation failed: %w", err)
-	}
+// // 	opts := policy.TokenRequestOptions{
+// // 		Scopes: []string{resource},
+// // 	}
 
-	opts := policy.TokenRequestOptions{
-		Scopes: []string{resource},
-	}
+// // 	accessToken, err := cred.GetToken(context.Background(), opts)
+// // 	if err != nil {
+// // 		return "", fmt.Errorf("DefaultAzureCredential failed to get token: %w", err)
+// // 	}
 
-	accessToken, err := cred.GetToken(context.Background(), opts)
-	if err != nil {
-		return "", fmt.Errorf("DefaultAzureCredential failed to get token: %w", err)
-	}
+// // 	log.Printf("Fallback access token acquired successfully.")
+// // 	return accessToken.Token, nil
+// // }
 
-	log.Printf("Fallback access token acquired successfully.")
-	return accessToken.Token, nil
-}
+// // /*
+// //  * The custom Prometheus API transport with the bearer token.
+// //  */
+// // type transport struct {
+// // 	underlyingTransport http.RoundTripper
+// // 	apiToken            string
+// // }
 
-/*
- * The custom Prometheus API transport with the bearer token.
- */
-type transport struct {
-	underlyingTransport http.RoundTripper
-	apiToken            string
-}
+// // /*
+// //  * The custom RoundTrip with the bearer token added to the request header.
+// //  */
+// // func (t *transport) RoundTrip(req *http.Request) (*http.Response, error) {
+// // 	req.Header.Add("Authorization", fmt.Sprintf("Bearer %s", t.apiToken))
+// // 	return t.underlyingTransport.RoundTrip(req)
+// // }
 
-/*
- * The custom RoundTrip with the bearer token added to the request header.
- */
-func (t *transport) RoundTrip(req *http.Request) (*http.Response, error) {
-	req.Header.Add("Authorization", fmt.Sprintf("Bearer %s", t.apiToken))
-	return t.underlyingTransport.RoundTrip(req)
-}
-
-func createPromApiManagedClient(amwQueryEndpoint string) (v1.API, error) {
-	token, err := getQueryAccessToken()
-	if err != nil {
-		return nil, fmt.Errorf("Failed to get managed identity access token: %s", err.Error())
-	}
-	if token == "" {
-		return nil, fmt.Errorf("Failed to get query managed identity access token: token is empty")
-	}
-	config := api.Config{
-		Address:      amwQueryEndpoint,
-		RoundTripper: &transport{underlyingTransport: http.DefaultTransport, apiToken: token},
-	}
-	prometheusAPIClient, err := api.NewClient(config)
-	if err != nil {
-		return nil, fmt.Errorf("Failed to create Prometheus API client: %s", err.Error())
-	}
-	return v1.NewAPI(prometheusAPIClient), nil
-}
+// // func createPromApiManagedClient(amwQueryEndpoint string) (v1.API, error) {
+// // 	token, err := getQueryAccessToken()
+// // 	if err != nil {
+// // 		return nil, fmt.Errorf("Failed to get managed identity access token: %s", err.Error())
+// // 	}
+// // 	if token == "" {
+// // 		return nil, fmt.Errorf("Failed to get query managed identity access token: token is empty")
+// // 	}
+// // 	config := api.Config{
+// // 		Address:      amwQueryEndpoint,
+// // 		RoundTripper: &transport{underlyingTransport: http.DefaultTransport, apiToken: token},
+// // 	}
+// // 	prometheusAPIClient, err := api.NewClient(config)
+// // 	if err != nil {
+// // 		return nil, fmt.Errorf("Failed to create Prometheus API client: %s", err.Error())
+// // 	}
+// // 	return v1.NewAPI(prometheusAPIClient), nil
+// // }
 
 var _ = BeforeSuite(func() {
 	var err error
@@ -396,45 +498,45 @@ var _ = Describe("Regions Suite", func() {
 	})
 
 	Context("Examine Prometheus via the AMW", func() {
-		// // It("Query for a metric", func() {
-		// // 	query := "up"
+		It("Query for a metric", func() {
+			query := "up"
 
-		// // 	fmt.Printf("Examining metrics via the query: '%s'\r\n", query)
+			fmt.Printf("Examining metrics via the query: '%s'\r\n", query)
 
-		// // 	warnings, result, err := utils.InstantQuery(PrometheusQueryClient, query)
-		// // 	Expect(err).NotTo(HaveOccurred())
-		// // 	Expect(warnings).To(BeEmpty())
+			warnings, result, err := utils.InstantQuery(PrometheusQueryClient, query)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(warnings).To(BeEmpty())
 
-		// // 	// Ensure there is at least one result
-		// // 	vectorResult, ok := result.(model.Vector)
-		// // 	Expect(ok).To(BeTrue(), "Result should be of type model.Vector")
-		// // 	Expect(vectorResult).NotTo(BeEmpty(), "Result should not be empty")
+			// Ensure there is at least one result
+			vectorResult, ok := result.(model.Vector)
+			Expect(ok).To(BeTrue(), "Result should be of type model.Vector")
+			Expect(vectorResult).NotTo(BeEmpty(), "Result should not be empty")
 
-		// // 	fmt.Printf("%d metrics were returned from the query.\r\n", vectorResult.Len())
-		// // })
+			fmt.Printf("%d metrics were returned from the query.\r\n", vectorResult.Len())
+		})
 
-		// // It("Query the specified recording rule", func() {
-		// // 	fmt.Printf("Examining the recording rule: %s", parmRuleName)
+		It("Query the specified recording rule", func() {
+			fmt.Printf("Examining the recording rule: %s", parmRuleName)
 
-		// // 	warnings, result, err := utils.InstantQuery(PrometheusQueryClient, parmRuleName)
+			warnings, result, err := utils.InstantQuery(PrometheusQueryClient, parmRuleName)
 
-		// // 	fmt.Println(warnings)
-		// // 	Expect(err).NotTo(HaveOccurred())
+			fmt.Println(warnings)
+			Expect(err).NotTo(HaveOccurred())
 
-		// // 	// Ensure there is at least one result
-		// // 	vectorResult, ok := result.(model.Vector)
-		// // 	Expect(ok).To(BeTrue(), "Result should be of type model.Vector")
-		// // 	Expect(vectorResult).NotTo(BeEmpty(), "Result should not be empty")
-		// // })
+			// Ensure there is at least one result
+			vectorResult, ok := result.(model.Vector)
+			Expect(ok).To(BeTrue(), "Result should be of type model.Vector")
+			Expect(vectorResult).NotTo(BeEmpty(), "Result should not be empty")
+		})
 
-		// // It("Query Prometheus alerts", func() {
-		// // 	warnings, result, err := utils.InstantQuery(PrometheusQueryClient, "alerts")
+		It("Query Prometheus alerts", func() {
+			warnings, result, err := utils.InstantQuery(PrometheusQueryClient, "alerts")
 
-		// // 	fmt.Println(warnings)
-		// // 	Expect(err).NotTo(HaveOccurred())
+			fmt.Println(warnings)
+			Expect(err).NotTo(HaveOccurred())
 
-		// // 	fmt.Println(result)
-		// // })
+			fmt.Println(result)
+		})
 
 		It("Query Azure Monitor for AMW usage and limits metrics", func() {
 			////cred, err := azidentity.NewDefaultAzureCredential(nil)
@@ -443,6 +545,9 @@ var _ = Describe("Regions Suite", func() {
 			clientID := "de61beff-a8f7-4016-810d-2a744c5fe868"
 			cred, err := azidentity.NewManagedIdentityCredential(&azidentity.ManagedIdentityCredentialOptions{
 				ID: azidentity.ClientID(clientID),
+				ClientOptions: azcore.ClientOptions{
+					Cloud: envConfig,
+				},
 			})
 			if err != nil {
 				log.Fatalf("failed to create managed identity credential: %v", err)
