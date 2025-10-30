@@ -51,6 +51,7 @@ func init() {
 	//flag.StringVar(&parmKubeconfigPath, "kubeconfig", "", "Path to the kubeconfig file") //*************NEW - WTD***************************
 	flag.StringVar(&parmRuleName, "parmRuleName", "", "Prometheus rule name to use in this test suite")
 	flag.StringVar(&parmAmwResourceId, "parmAmwResourceId", "", "AMW resource id to use in this test suite")
+	flag.StringVar(&azureClientId, "clientId", "", "Azure Client ID to use in this test suite")
 }
 
 func TestTest(t *testing.T) {
@@ -362,7 +363,9 @@ var _ = BeforeSuite(func() {
 	// fmt.Printf("parmVerbose: %s\r\n", parmVerbose)
 	// Expect(strings.ToLower(parmVerbose)).To(BeElementOf([]string{"true", "false"}), "parmVerbose must be either 'true' or 'false'.")
 
-	azureClientId = os.Getenv(AZURE_CLIENT_ID)
+	////azureClientId = os.Getenv(AZURE_CLIENT_ID)
+	fmt.Printf("Setting env variable %s to %s\r\n", AZURE_CLIENT_ID, azureClientId)
+	os.Setenv(AZURE_CLIENT_ID, azureClientId)
 	fmt.Printf("azureClientId: %s\r\n", azureClientId)
 	Expect(azureClientId).NotTo(BeEmpty())
 })
