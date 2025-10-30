@@ -35,6 +35,7 @@ var (
 	PrometheusQueryClient v1.API
 	parmRuleName          string
 	parmAmwResourceId     string
+	azureClientId         string
 	//parmKubeconfigPath    string //*************NEW - WTD***************************
 	//v                     bool
 	//verboseLogging        bool = false
@@ -44,6 +45,7 @@ const namespace = "kube-system"
 const containerName = "prometheus-collector"
 const controllerLabelName = "rsName"
 const controllerLabelValue = "ama-metrics"
+const AZURE_CLIENT_ID = "AZURE_CLIENT_ID"
 
 func init() {
 	//flag.StringVar(&parmKubeconfigPath, "kubeconfig", "", "Path to the kubeconfig file") //*************NEW - WTD***************************
@@ -360,6 +362,9 @@ var _ = BeforeSuite(func() {
 	// fmt.Printf("parmVerbose: %s\r\n", parmVerbose)
 	// Expect(strings.ToLower(parmVerbose)).To(BeElementOf([]string{"true", "false"}), "parmVerbose must be either 'true' or 'false'.")
 
+	azureClientId = os.Getenv(AZURE_CLIENT_ID)
+	fmt.Printf("azureClientId: %s\r\n", azureClientId)
+	Expect(azureClientId).NotTo(BeEmpty())
 })
 
 var _ = AfterSuite(func() {
@@ -542,9 +547,9 @@ var _ = Describe("Regions Suite", func() {
 			////cred, err := azidentity.NewDefaultAzureCredential(nil)
 
 			// Create a credential using the specific client ID
-			clientID := "de61beff-a8f7-4016-810d-2a744c5fe868"
+			////clientID := "de61beff-a8f7-4016-810d-2a744c5fe868"
 			cred, err := azidentity.NewManagedIdentityCredential(&azidentity.ManagedIdentityCredentialOptions{
-				ID: azidentity.ClientID(clientID),
+				ID: azidentity.ClientID(azureClientId),
 				ClientOptions: azcore.ClientOptions{
 					Cloud: envConfig,
 				},
