@@ -88,16 +88,16 @@ var envConfig = cloud.Configuration{
 	Services: map[cloud.ServiceName]cloud.ServiceConfiguration{
 		cloud.ResourceManager: {
 			Endpoint: "https://management.azure.eaglex.ic.gov/",
-			Audience: "https://management.azure.eaglex.ic.gov/.default",
+			Audience: "https://management.azure.eaglex.ic.gov/",
 		},
 		// // cloud.Storage: {
 		// // 	// If using storage data-plane clients; adjust endpoint and audience if required.
 		// // 	// Endpoint is often per-account, so set in the service client instead.
-		// // 	Audience: "https://storage.azure.eaglex.ic.gov/.default",
+		// // 	Audience: "https://storage.azure.eaglex.ic.gov/",
 		// // },
 		// // cloud.KeyVault: {
 		// // 	Endpoint: "https://vault.azure.eaglex.ic.gov",
-		// // 	Audience: "https://vault.azure.eaglex.ic.gov/.default",
+		// // 	Audience: "https://vault.azure.eaglex.ic.gov/",
 		// // },
 		// add more services as needed
 	},
@@ -109,9 +109,7 @@ func createDefaultAzureCredential(options *azidentity.DefaultAzureCredentialOpti
 		options = &azidentity.DefaultAzureCredentialOptions{}
 	}
 
-	custom := envConfig
-
-	options.Cloud = custom
+	options.ClientOptions.Cloud = envConfig
 	cred, err := azidentity.NewDefaultAzureCredential(options)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create default azure credential: %w", err)
@@ -127,7 +125,7 @@ func getQueryAccessToken() (string, error) {
 	}
 
 	opts := policy.TokenRequestOptions{
-		Scopes: []string{"https://prometheus.monitor.azure.eaglex.ic.gov/.default"},
+		Scopes: []string{"https://monitor.azure.eaglex.ic.gov/.default"},
 	}
 
 	accessToken, err := cred.GetToken(context.Background(), opts)
@@ -365,7 +363,7 @@ var _ = BeforeSuite(func() {
 
 	////azureClientId = os.Getenv(AZURE_CLIENT_ID)
 	fmt.Printf("Setting env variable %s to %s\r\n", AZURE_CLIENT_ID, azureClientId)
-	os.Setenv(AZURE_CLIENT_ID, azureClientId)
+	_ = os.Setenv(AZURE_CLIENT_ID, azureClientId)
 	fmt.Printf("azureClientId: %s\r\n", azureClientId)
 	Expect(azureClientId).NotTo(BeEmpty())
 })
