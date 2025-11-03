@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -111,6 +110,7 @@ func createDefaultAzureCredential(options *azidentity.DefaultAzureCredentialOpti
 	}
 
 	options.ClientOptions.Cloud = envConfig
+	options.DisableInstanceDiscovery = true // reduces unnecessary discovery
 	cred, err := azidentity.NewDefaultAzureCredential(options)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create default azure credential: %w", err)
@@ -125,12 +125,13 @@ func getQueryAccessToken(amwQueryEndpoint string) (string, error) {
 		return "", fmt.Errorf("Failed to create identity credential: %s", err.Error())
 	}
 
-	u, err := url.Parse(amwQueryEndpoint)
-	if err != nil {
-		return "", fmt.Errorf("invalid AMW_QUERY_ENDPOINT: %w", err)
-	}
+	// u, err := url.Parse(amwQueryEndpoint)
+	// if err != nil {
+	// 	return "", fmt.Errorf("invalid AMW_QUERY_ENDPOINT: %w", err)
+	// }
 
-	scope := "https://" + u.Host + "/.default" // e.g., https://prometheus.monitor.azure.eaglex.ic.gov/.default
+	scope := "https://usnateast.prometheus.monitor.azure.eaglex.ic.gov/.default" // e.g., https://prometheus.monitor.azure.eaglex.ic.gov/.default
+	fmt.Printf("Requesting access token for scope: %s\r\n", scope)
 
 	opts := policy.TokenRequestOptions{
 		Scopes: []string{scope},
@@ -138,10 +139,25 @@ func getQueryAccessToken(amwQueryEndpoint string) (string, error) {
 
 	accessToken, err := cred.GetToken(context.Background(), opts)
 	if err != nil {
+		//return "", fmt.Errorf("failed to get accesstoken: %s", err.Error())
+		fmt.Printf("failed to get accesstoken: %s\r\n", err.Error())
+	} else {
+		return accessToken.Token, nil
+	}
+
+	scope2 := "https://prometheus.monitor.azure.eaglex.ic.gov/.default" // e.g., https://prometheus.monitor.azure.eaglex.ic.gov/.default
+	fmt.Printf("Requesting access token for scope: %s\r\n", scope2)
+
+	opts2 := policy.TokenRequestOptions{
+		Scopes: []string{scope2},
+	}
+
+	accessToken2, err := cred.GetToken(context.Background(), opts2)
+	if err != nil {
 		return "", fmt.Errorf("failed to get accesstoken: %s", err.Error())
 	}
 
-	return accessToken.Token, nil
+	return accessToken2.Token, nil
 }
 
 /*
