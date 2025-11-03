@@ -87,8 +87,12 @@ var envConfig = cloud.Configuration{
 	ActiveDirectoryAuthorityHost: "https://login.microsoftonline.eaglex.ic.gov/",
 	Services: map[cloud.ServiceName]cloud.ServiceConfiguration{
 		cloud.ResourceManager: {
-			Endpoint: "https://management.azure.eaglex.ic.gov/",
-			Audience: "https://management.azure.eaglex.ic.gov/",
+			Endpoint: "https://management.azure.eaglex.ic.gov",
+			Audience: "https://management.azure.eaglex.ic.gov",
+		},
+		azquery.ServiceNameMetrics: {
+			Endpoint: "https://management.azure.eaglex.ic.gov",
+			Audience: "https://management.azure.eaglex.ic.gov",
 		},
 		// // cloud.Storage: {
 		// // 	// If using storage data-plane clients; adjust endpoint and audience if required.
