@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -118,14 +119,21 @@ func createDefaultAzureCredential(options *azidentity.DefaultAzureCredentialOpti
 }
 
 // //////////////////////////////////////////////////
-func getQueryAccessToken() (string, error) {
+func getQueryAccessToken(amwQueryEndpoint string) (string, error) {
 	cred, err := createDefaultAzureCredential(nil) //(nil)
 	if err != nil {
 		return "", fmt.Errorf("Failed to create identity credential: %s", err.Error())
 	}
 
+	u, err := url.Parse(amwQueryEndpoint)
+	if err != nil {
+		return "", fmt.Errorf("invalid AMW_QUERY_ENDPOINT: %w", err)
+	}
+
+	scope := "https://" + u.Host + "/.default" // e.g., https://prometheus.monitor.azure.eaglex.ic.gov/.default
+
 	opts := policy.TokenRequestOptions{
-		Scopes: []string{"https://monitor.azure.eaglex.ic.gov/.default"},
+		Scopes: []string{scope},
 	}
 
 	accessToken, err := cred.GetToken(context.Background(), opts)
@@ -156,7 +164,7 @@ func (t *transport) RoundTrip(req *http.Request) (*http.Response, error) {
  * Create a Prometheus API client to use with the Managed Prometheus AMW Query API.
  */
 func createPromApiManagedClient(amwQueryEndpoint string) (v1.API, error) {
-	token, err := getQueryAccessToken()
+	token, err := getQueryAccessToken(amwQueryEndpoint)
 	if err != nil {
 		return nil, fmt.Errorf("Failed to get query access token: %s", err.Error())
 	}
@@ -561,7 +569,13 @@ var _ = Describe("Regions Suite", func() {
 
 			Expect(err).NotTo(HaveOccurred())
 
-			client, err := azquery.NewMetricsClient(cred, nil)
+			client, err := azquery.NewMetricsClient(cred,
+				&azquery.MetricsClientOptions{
+					ClientOptions: azcore.ClientOptions{
+						Cloud: envConfig, // our EAGLEX cloud.Configuration
+					},
+				},
+			)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(client).ToNot(BeNil())
 
